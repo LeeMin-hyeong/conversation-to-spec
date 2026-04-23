@@ -1,819 +1,375 @@
 import json
+from pathlib import Path
 
-from app.model_runner import BaseModelRunner, MockModelRunner
-from app.pipeline import run_pipeline
-
-
-def test_mock_pipeline_writes_json_and_markdown(tmp_path) -> None:
-    conversation_path = tmp_path / "conversation.txt"
-    conversation_path.write_text(
-        "\n".join(
-            [
-                "Client: We need users to reserve tables online.",
-                "Client: It should be simple for first-time users.",
-                "PM: What is the target response time?",
-            ]
-        ),
-        encoding="utf-8",
-    )
-
-    output_dir = tmp_path / "output"
-    runner = MockModelRunner()
-
-    result = run_pipeline(
-        input_path=conversation_path,
-        output_dir=output_dir,
-        runner=runner,
-        prompt_config={
-            "ambiguous_phrases": ["simple", "easy to use"],
-            "generation": {},
-        },
-    )
-
-    assert result.json_path.exists()
-    assert result.markdown_path.exists()
-
-    payload = json.loads(result.json_path.read_text(encoding="utf-8"))
-    assert "project_summary" in payload
-    assert "functional_requirements" in payload
-    assert "utterances" in payload
-    assert "run_metadata" in payload
-    assert payload["run_metadata"]["execution_time_sec"] >= 0
+from app.evaluation import evaluate_model
+from app.model_runner import MockModelRunner
+from app.pipeline import ConversationToSpecPipeline
+from app.prompt_builder import load_prompt_config
+from app.segmenter import segment_conversation
 
 
-class _StaticRunner(BaseModelRunner):
-    def __init__(self, payload: dict) -> None:
-        super().__init__(runner_name="static")
-        self._payload = payload
-
-    def generate_structured_output(self, utterances: list[dict], prompt_config: dict) -> str:
-        return json.dumps(self._payload, ensure_ascii=False)
-
-
-class _FailThenRescueRunner(BaseModelRunner):
+class FirstStage2FailRunner(MockModelRunner):
     def __init__(self) -> None:
-        super().__init__(runner_name="fail-then-rescue")
+        super().__init__()
+        self._failed_once = False
 
-    def generate_structured_output(self, utterances: list[dict], prompt_config: dict) -> str:
-        stage = str(prompt_config.get("stage", "extract_chunk"))
-        if stage == "utterance_rescue":
-            text = str(utterances[0].get("text", "")).lower()
-            if "?" in text:
-                return "category: open_question\ntext: Need clarification\nfollow_up_question: What should happen?\npriority: null\n"
-            return "category: functional\ntext: Users can reserve tables\npriority: medium\n"
-        return "needs_follow_up>"
+    def generate(self, prompt: str, generation_config: dict) -> str:
+        if "CHAIN_STAGE:2_CANDIDATE_CLASSIFICATION" in prompt and not self._failed_once:
+            self._failed_once = True
+            self.last_generation_info = {
+                "model_name": self.model_name,
+                "latency_sec": 0.01,
+                "prompt_tokens": None,
+                "completion_tokens": None,
+            }
+            return "not-json"
+        return super().generate(prompt, generation_config)
 
 
-class _HybridFlowRunner(BaseModelRunner):
-    def __init__(self) -> None:
-        super().__init__(runner_name="hybrid-static")
-        self.stages: list[str] = []
+class Stage5MalformedRunner(MockModelRunner):
+    def generate(self, prompt: str, generation_config: dict) -> str:
+        if "CHAIN_STAGE:5_FOLLOWUP_GENERATION" in prompt:
+            self.last_generation_info = {
+                "model_name": self.model_name,
+                "latency_sec": 0.01,
+                "prompt_tokens": None,
+                "completion_tokens": None,
+            }
+            return '{"developer_questions_text":"What should we do next?"}'
+        return super().generate(prompt, generation_config)
 
-    def generate_structured_output(self, utterances: list[dict], prompt_config: dict) -> str:
-        stage = str(prompt_config.get("stage", "extract_chunk"))
-        self.stages.append(stage)
 
-        if stage == "hybrid_role_inference":
+class Stage1PlaceholderRunner(MockModelRunner):
+    def generate(self, prompt: str, generation_config: dict) -> str:
+        if "CHAIN_STAGE:1_CANDIDATE_EXTRACTION" in prompt:
+            self.last_generation_info = {
+                "model_name": self.model_name,
+                "latency_sec": 0.01,
+                "prompt_tokens": None,
+                "completion_tokens": None,
+            }
             return json.dumps(
                 {
-                    "roles": [
-                        {"id": "U1", "role": "requester"},
-                        {"id": "U2", "role": "requester"},
-                        {"id": "U3", "role": "requester"},
-                        {"id": "U4", "role": "developer"},
-                    ]
-                },
-                ensure_ascii=False,
-            )
-
-        if stage == "hybrid_candidate_extraction":
-            return json.dumps(
-                {
-                    "project_intent": "School clubs scheduling app",
                     "candidates": [
                         {
                             "id": "C1",
-                            "text": "Allow club leaders to create and update events.",
-                            "evidence": ["U1"],
-                            "ambiguity": "clear",
+                            "kind": "possible_requirement",
+                            "text": "short candidate description",
+                            "source_units": ["U1"],
                         },
                         {
                             "id": "C2",
-                            "text": "It should be easy to use for freshmen.",
-                            "evidence": ["U2"],
-                            "ambiguity": "ambiguous",
+                            "kind": "possible_constraint",
+                            "text": "explicit boundary or release limitation",
+                            "source_units": ["U1"],
                         },
-                        {
-                            "id": "C3",
-                            "text": "Maybe attendance analytics can be added later.",
-                            "evidence": ["U3"],
-                            "ambiguity": "ambiguous",
-                        },
-                        {
-                            "id": "C4",
-                            "text": "What is the analytics deadline?",
-                            "evidence": ["U4"],
-                            "ambiguity": "ambiguous",
-                        },
-                    ],
-                },
-                ensure_ascii=False,
+                    ]
+                }
             )
+        return super().generate(prompt, generation_config)
 
-        if stage == "hybrid_spec_render":
-            draft = dict(prompt_config.get("candidate_payload", {}))
+
+class QualityAsFRRunner(MockModelRunner):
+    def generate(self, prompt: str, generation_config: dict) -> str:
+        self.last_generation_info = {
+            "model_name": self.model_name,
+            "latency_sec": 0.01,
+            "prompt_tokens": None,
+            "completion_tokens": None,
+        }
+        if "CHAIN_STAGE:1_CANDIDATE_EXTRACTION" in prompt:
             return json.dumps(
                 {
-                    "project_summary": "School clubs scheduling requirements draft.",
-                    "functional_requirements": draft.get("functional_requirements", []),
-                    "non_functional_requirements": draft.get("non_functional_requirements", []),
-                    "constraints": draft.get("constraints", []),
-                    "assumptions": draft.get("assumptions", []),
-                    "open_questions": draft.get("open_questions", []),
-                    "follow_up_questions": draft.get("follow_up_questions", []),
-                    "question_decisions": draft.get("question_decisions", []),
-                },
-                ensure_ascii=False,
+                    "candidates": [
+                        {
+                            "id": "C1",
+                            "kind": "possible_requirement",
+                            "text": "Customers should reserve tables online.",
+                            "source_units": ["U1"],
+                        },
+                        {
+                            "id": "C2",
+                            "kind": "possible_requirement",
+                            "text": "The website should load quickly on mobile devices.",
+                            "source_units": ["U2"],
+                        },
+                    ]
+                }
             )
-
-        return "{}"
-
-
-class _HybridEmptyCandidateRunner(BaseModelRunner):
-    def __init__(self) -> None:
-        super().__init__(runner_name="hybrid-empty-candidate")
-        self.stages: list[str] = []
-
-    def generate_structured_output(self, utterances: list[dict], prompt_config: dict) -> str:
-        stage = str(prompt_config.get("stage", "extract_chunk"))
-        self.stages.append(stage)
-
-        if stage == "hybrid_role_inference":
-            return json.dumps({"roles": [{"id": "U1", "role": "requester"}, {"id": "U2", "role": "requester"}]}, ensure_ascii=False)
-        if stage == "hybrid_candidate_extraction":
-            return json.dumps({"project_intent": "Test", "candidates": []}, ensure_ascii=False)
-        if stage == "utterance_rescue":
-            text = str(utterances[0].get("text", "")).lower()
-            if "?" in text:
-                return "category: open_question\ntext: Clarify details\nfollow_up_question: What should happen?\npriority: null\n"
-            return "category: functional\ntext: Users can reserve tables online.\npriority: medium\n"
-        if stage == "hybrid_spec_render":
+        if "CHAIN_STAGE:2_CANDIDATE_CLASSIFICATION" in prompt:
             return json.dumps(
                 {
-                    "project_summary": "should not be used in this test",
-                    "functional_requirements": [],
-                    "non_functional_requirements": [],
-                    "constraints": [],
-                    "assumptions": [],
-                    "open_questions": [],
-                    "follow_up_questions": [],
-                    "question_decisions": [],
-                },
-                ensure_ascii=False,
+                    "classified_candidates": [
+                        {
+                            "id": "C1",
+                            "final_type": "functional_requirement",
+                            "reason": "Capability",
+                            "source_units": ["U1"],
+                        },
+                        {
+                            "id": "C2",
+                            "final_type": "functional_requirement",
+                            "reason": "Model mislabeled quality as FR",
+                            "source_units": ["U2"],
+                        },
+                    ]
+                }
             )
-        return "{}"
-
-
-def test_pipeline_enforces_llm_question_decisions(tmp_path) -> None:
-    conversation_path = tmp_path / "conversation.txt"
-    conversation_path.write_text(
-        "\n".join(
-            [
-                "Client: It should be simple for freshmen.",
-                "PM: What response time target do you need?",
-                "Client: Under 2 seconds.",
-            ]
-        ),
-        encoding="utf-8",
-    )
-
-    output_dir = tmp_path / "output"
-    runner = _StaticRunner(
-        {
-            "project_summary": "Test",
-            "functional_requirements": [],
-            "non_functional_requirements": [
+        if "CHAIN_STAGE:3_REQUIREMENT_REWRITING" in prompt:
+            return json.dumps(
                 {
-                    "id": "NFR1",
-                    "text": "The app should be simple for freshmen.",
-                    "priority": "medium",
-                    "evidence": ["U1"],
+                    "rewritten_items": [
+                        {
+                            "id": "R1",
+                            "type": "functional_requirement",
+                            "text": "The system shall allow customers to reserve tables online.",
+                            "source_units": ["U1"],
+                        },
+                        {
+                            "id": "R2",
+                            "type": "functional_requirement",
+                            "text": "The website shall load quickly on mobile devices.",
+                            "source_units": ["U2"],
+                        },
+                    ]
                 }
-            ],
-            "constraints": [],
-            "assumptions": [],
-            "open_questions": [],
-            "follow_up_questions": [
-                "What response time target do you need?",
-                "How should simplicity be measured?",
-            ],
-            "question_decisions": [
-                {
-                    "text": "Response-time target",
-                    "decision": "already_asked",
-                    "evidence": ["U2", "U3"],
-                },
-                {
-                    "text": "Simplicity requirement",
-                    "decision": "needs_follow_up",
-                    "suggested_follow_up": "How should simplicity be measured?",
-                    "evidence": ["U1"],
-                },
-            ],
+            )
+        if "CHAIN_STAGE:4_OPEN_QUESTION_GENERATION" in prompt:
+            return json.dumps({"open_questions": []})
+        if "CHAIN_STAGE:5_FOLLOWUP_GENERATION" in prompt:
+            return json.dumps({"follow_up_questions": []})
+        if "CHAIN_STAGE:6_PROJECT_SUMMARY" in prompt:
+            return json.dumps({"project_summary": "Summary."})
+        return super().generate(prompt, generation_config)
+
+
+def _sample_text() -> str:
+    return (
+        "We need a cafe website with menu and hours.\n"
+        "Customers should reserve tables online.\n"
+        "Online payment is not part of the first release.\n"
+        "Only staff should have access to the admin page.\n"
+        "The design should feel clean and modern.\n"
+        "We may add online payment later."
+    )
+
+
+def _build_pipeline(runner=None, generation_config=None) -> ConversationToSpecPipeline:
+    return ConversationToSpecPipeline(
+        runner=runner or MockModelRunner(),
+        prompt_config=load_prompt_config(),
+        generation_config=generation_config or {"max_retries": 1},
+    )
+
+
+def test_stage_1_returns_candidates_with_source_units():
+    pipeline = _build_pipeline()
+    units = segment_conversation(_sample_text())
+    stage1, *_ = pipeline.run_stage_1_candidate_extraction(units)
+    assert stage1.candidates
+    for candidate in stage1.candidates:
+        assert candidate.source_units
+
+
+def test_stage_2_classifies_candidates_with_allowed_labels():
+    pipeline = _build_pipeline()
+    units = segment_conversation(_sample_text())
+    stage1, *_ = pipeline.run_stage_1_candidate_extraction(units)
+    stage2, enriched, *_ = pipeline.run_stage_2_candidate_classification(units, stage1)
+    assert stage2.classified_candidates
+    stage1_ids = {c.id for c in stage1.candidates}
+    classified_ids = {c.id for c in stage2.classified_candidates}
+    assert stage1_ids == classified_ids
+    for item in stage2.classified_candidates:
+        assert item.final_type in {
+            "functional_requirement",
+            "non_functional_requirement",
+            "constraint",
+            "open_question",
+            "follow_up_trigger",
+            "note",
+            "discard",
         }
+    assert enriched
+    assert any(item.final_type == "constraint" for item in stage2.classified_candidates)
+    assert any(item.final_type == "note" for item in stage2.classified_candidates)
+
+
+def test_stage_3_rewrites_without_losing_traceability():
+    pipeline = _build_pipeline()
+    units = segment_conversation(_sample_text())
+    stage1, *_ = pipeline.run_stage_1_candidate_extraction(units)
+    _, enriched, *_ = pipeline.run_stage_2_candidate_classification(units, stage1)
+    stage3, *_ = pipeline.run_stage_3_requirement_rewriting(units, enriched)
+    for item in stage3.rewritten_items:
+        assert item.type in {"functional_requirement", "non_functional_requirement", "constraint"}
+        assert item.text.strip()
+        assert item.source_units
+    assert any(item.type == "constraint" for item in stage3.rewritten_items)
+
+
+def test_stage_4_generates_open_questions_tied_to_ambiguity():
+    pipeline = _build_pipeline()
+    units = segment_conversation(_sample_text())
+    stage1, *_ = pipeline.run_stage_1_candidate_extraction(units)
+    _, enriched, *_ = pipeline.run_stage_2_candidate_classification(units, stage1)
+    stage3, *_ = pipeline.run_stage_3_requirement_rewriting(units, enriched)
+    stage4, *_ = pipeline.run_stage_4_open_question_generation(units, enriched, stage3)
+    assert stage4.open_questions
+    for question in stage4.open_questions:
+        assert question.text.strip().endswith("?")
+        assert question.source_units
+
+
+def test_stage_5_generates_followup_questions_tied_to_ambiguity():
+    pipeline = _build_pipeline()
+    units = segment_conversation(_sample_text())
+    stage1, *_ = pipeline.run_stage_1_candidate_extraction(units)
+    _, enriched, *_ = pipeline.run_stage_2_candidate_classification(units, stage1)
+    stage3, *_ = pipeline.run_stage_3_requirement_rewriting(units, enriched)
+    seeded_open_questions, _, _ = pipeline._build_open_questions_and_notes(enriched)
+    stage4, *_ = pipeline.run_stage_4_open_question_generation(units, enriched, stage3)
+    open_questions = pipeline._dedupe_question_items(
+        seeded_open_questions + list(stage4.open_questions)
     )
+    stage5, *_ = pipeline.run_stage_5_followup_generation(units, enriched, stage3, open_questions)
+    assert stage5.follow_up_questions
+    for question in stage5.follow_up_questions:
+        assert question.text.strip().endswith("?")
+        assert question.source_units
 
-    result = run_pipeline(
-        input_path=conversation_path,
-        output_dir=output_dir,
-        runner=runner,
-        prompt_config={
-            "generation": {},
-            "enable_final_refinement": False,
-            "enable_chunking": False,
-            "enable_rule_postprocess": False,
-            "enforce_llm_question_decisions": True,
-            "auto_follow_up_fallback": False,
-        },
+
+def test_constraint_budget_triggers_followup_question():
+    text = (
+        "We need a booking website.\n"
+        "The first release must fit a limited budget.\n"
+        "Online payment is not part of the first release."
     )
-
-    assert result.spec.follow_up_questions == ["How should simplicity be measured?"]
-    assert len(result.spec.question_decisions) == 2
-
-
-def test_pipeline_recovers_when_all_chunks_fail_via_llm_rescue(tmp_path) -> None:
-    conversation_path = tmp_path / "conversation.txt"
-    conversation_path.write_text(
-        "\n".join(
-            [
-                "Client: We need users to reserve tables online.",
-                "PM: What is the target response time?",
-            ]
-        ),
-        encoding="utf-8",
+    pipeline = _build_pipeline()
+    units = segment_conversation(text)
+    stage1, *_ = pipeline.run_stage_1_candidate_extraction(units)
+    _, enriched, *_ = pipeline.run_stage_2_candidate_classification(units, stage1)
+    stage3, *_ = pipeline.run_stage_3_requirement_rewriting(units, enriched)
+    seeded_open_questions, _, _ = pipeline._build_open_questions_and_notes(enriched)
+    stage4, *_ = pipeline.run_stage_4_open_question_generation(units, enriched, stage3)
+    open_questions = pipeline._dedupe_question_items(
+        seeded_open_questions + list(stage4.open_questions)
     )
-
-    output_dir = tmp_path / "output"
-    runner = _FailThenRescueRunner()
-
-    result = run_pipeline(
-        input_path=conversation_path,
-        output_dir=output_dir,
-        runner=runner,
-        prompt_config={
-            "generation": {},
-            "enable_chunking": False,
-            "enable_final_refinement": False,
-            "enable_failure_rescue_on_total_failure": True,
-            "enable_rule_postprocess": False,
-            "enforce_llm_question_decisions": True,
-            "auto_follow_up_fallback": False,
-        },
-    )
-
-    assert len(result.spec.functional_requirements) >= 1
-    assert any(item.decision in {"needs_follow_up", "already_asked"} for item in result.spec.question_decisions)
+    stage5, *_ = pipeline.run_stage_5_followup_generation(units, enriched, stage3, open_questions)
+    assert any("budget" in question.text.lower() for question in stage5.follow_up_questions)
 
 
-def test_pipeline_sanity_reclassifies_obvious_mislabels(tmp_path) -> None:
-    conversation_path = tmp_path / "conversation.txt"
-    conversation_path.write_text(
-        "\n".join(
-            [
-                "Client: Our school clubs need an app to publish weekly meeting schedules.",
-                "Client: Club leaders should create and update events.",
-                "Client: Students should join events and receive reminder notifications.",
-                "Client: It should be easy to use for freshmen.",
-                "Client: Maybe attendance analytics can be added later.",
-                "PM: Who is allowed to cancel events?",
-                "Client: Only club leaders and the student council should cancel events.",
-            ]
-        ),
-        encoding="utf-8",
-    )
+def test_final_assembly_preserves_schema(tmp_path: Path):
+    input_path = tmp_path / "sample.txt"
+    input_path.write_text(_sample_text(), encoding="utf-8")
+    pipeline = _build_pipeline()
+    run = pipeline.run_file(input_path=input_path, output_dir=tmp_path)
 
-    output_dir = tmp_path / "output"
-    runner = _StaticRunner(
+    assert run.success is True
+    assert run.spec.project_summary
+    assert run.spec.conversation_units
+    assert (tmp_path / "spec.json").exists()
+    assert (tmp_path / "spec.md").exists()
+    loaded = json.loads((tmp_path / "spec.json").read_text(encoding="utf-8"))
+    assert "functional_requirements" in loaded
+    assert "non_functional_requirements" in loaded
+    assert "constraints" in loaded
+    assert "open_questions" in loaded
+    assert "follow_up_questions" in loaded
+    assert "notes" in loaded
+
+
+def test_stage_failure_does_not_crash_batch_evaluation(tmp_path: Path):
+    samples = [
         {
-            "project_summary": "raw model output",
-            "functional_requirements": [
-                {"id": "FR1", "text": "Our school clubs need an app to publish weekly meeting schedules.", "priority": "medium", "evidence": ["U1"]},
-                {"id": "FR2", "text": "Club leaders should create and update events.", "priority": "medium", "evidence": ["U2"]},
-                {"id": "FR3", "text": "Students should join events and receive reminder notifications.", "priority": "medium", "evidence": ["U3"]},
-            ],
-            "non_functional_requirements": [
-                {"id": "NFR1", "text": "It should be easy to use for freshmen.", "priority": "medium", "evidence": ["U4"]},
-                {"id": "NFR2", "text": "Maybe attendance analytics can be added later.", "priority": "medium", "evidence": ["U5"]},
-                {"id": "NFR3", "text": "Who is allowed to cancel events?", "priority": "medium", "evidence": ["U6"]},
-                {"id": "NFR4", "text": "Only club leaders and the student council should cancel events.", "priority": "medium", "evidence": ["U7"]},
-            ],
-            "constraints": [],
-            "assumptions": [],
-            "open_questions": [],
-            "follow_up_questions": [],
-            "question_decisions": [],
-        }
-    )
-
-    result = run_pipeline(
-        input_path=conversation_path,
-        output_dir=output_dir,
-        runner=runner,
-        prompt_config={
-            "generation": {},
-            "enable_final_refinement": False,
-            "enable_chunking": False,
-            "enable_sanity_postprocess": True,
-            "enable_rule_postprocess": False,
-            "enforce_llm_question_decisions": True,
-            "auto_follow_up_fallback": False,
+            "id": "s1",
+            "conversation_text": _sample_text(),
+            "gold": {
+                "functional_requirements": [],
+                "non_functional_requirements": [],
+                "constraints": [],
+                "open_questions": [],
+                "follow_up_questions": [],
+                "notes": [],
+            },
         },
-    )
-
-    assert any("only club leaders" in item.text.lower() for item in result.spec.constraints)
-    assert any("attendance analytics" in item.text.lower() for item in result.spec.assumptions)
-    assert not any("who is allowed to cancel events" in item.text.lower() for item in result.spec.open_questions)
-    assert any("who is allowed to cancel events" in item.text.lower() for item in result.spec.question_decisions)
-    assert any(item.decision in {"already_asked", "resolved"} for item in result.spec.question_decisions)
-
-
-def test_assumption_decision_becomes_resolved_after_topic_follow_up(tmp_path) -> None:
-    conversation_path = tmp_path / "conversation_no_label.txt"
-    conversation_path.write_text(
-        "\n".join(
-            [
-                "Our school clubs need an app to publish weekly meeting schedules.",
-                "Maybe attendance analytics can be added later.",
-                "You should give us specific deadline for attendance analytics.",
-                "I think it's okay for May 3rd.",
-            ]
-        ),
-        encoding="utf-8",
-    )
-
-    output_dir = tmp_path / "output"
-    runner = _StaticRunner(
         {
-            "project_summary": "raw model output",
-            "functional_requirements": [
-                {
-                    "id": "FR1",
-                    "text": "Our school clubs need an app to publish weekly meeting schedules.",
-                    "priority": "medium",
-                    "evidence": ["U1"],
-                }
-            ],
-            "non_functional_requirements": [
-                {
-                    "id": "NFR1",
-                    "text": "Maybe attendance analytics can be added later.",
-                    "priority": "medium",
-                    "evidence": ["U2"],
-                }
-            ],
-            "constraints": [],
-            "assumptions": [],
-            "open_questions": [],
-            "follow_up_questions": [],
-            "question_decisions": [],
-        }
-    )
-
-    result = run_pipeline(
-        input_path=conversation_path,
-        output_dir=output_dir,
-        runner=runner,
-        prompt_config={
-            "generation": {},
-            "enable_final_refinement": False,
-            "enable_chunking": False,
-            "enable_sanity_postprocess": True,
-            "enable_rule_postprocess": False,
-            "enforce_llm_question_decisions": True,
-            "auto_follow_up_fallback": False,
+            "id": "s2",
+            "conversation_text": "Need scheduling app.\nUsers should receive reminders.",
+            "gold": {
+                "functional_requirements": [],
+                "non_functional_requirements": [],
+                "constraints": [],
+                "open_questions": [],
+                "follow_up_questions": [],
+                "notes": [],
+            },
         },
-    )
-
-    assumption_decisions = [
-        item for item in result.spec.question_decisions if "attendance analytics" in item.text.lower()
     ]
-    assert assumption_decisions
-    assert assumption_decisions[0].decision == "resolved"
-    assert assumption_decisions[0].suggested_follow_up is None
+    pipeline = _build_pipeline(runner=FirstStage2FailRunner(), generation_config={"max_retries": 0})
+    report = evaluate_model("mock-fail-once", pipeline, samples, tmp_path)
+    assert report["metrics"]["sample_count"] == 2
+    assert (tmp_path / "predictions" / "s1_error.txt").exists()
+    assert (tmp_path / "predictions" / "s2_pred.json").exists()
 
 
-def test_assumption_without_answer_requires_follow_up_question(tmp_path) -> None:
-    conversation_path = tmp_path / "conversation.txt"
-    conversation_path.write_text(
-        "\n".join(
-            [
-                "Client: Maybe attendance analytics can be added later.",
-                "PM: What is the target deadline for attendance analytics?",
-            ]
-        ),
-        encoding="utf-8",
+def test_stage_5_failure_uses_fallback_and_keeps_final_spec(tmp_path: Path):
+    input_path = tmp_path / "sample.txt"
+    input_path.write_text(_sample_text(), encoding="utf-8")
+    pipeline = _build_pipeline(runner=Stage5MalformedRunner(), generation_config={"max_retries": 0})
+    run = pipeline.run_file(input_path=input_path, output_dir=tmp_path)
+
+    assert run.success is True
+    assert run.spec.project_summary
+    assert run.spec.follow_up_questions
+    assert any("stage_5_followup_generation used deterministic fallback" in w for w in run.spec.verification_warnings)
+    assert run.stage_stats.get("stage_5_fallback_used") is True
+    loaded = json.loads((tmp_path / "spec.json").read_text(encoding="utf-8"))
+    assert loaded["functional_requirements"] or loaded["non_functional_requirements"] or loaded["constraints"]
+
+
+def test_debug_artifacts_cleanup_removes_stale_files(tmp_path: Path):
+    output_dir = tmp_path / "out"
+    stale_debug_dir = output_dir / "debug" / "spec"
+    stale_debug_dir.mkdir(parents=True, exist_ok=True)
+    stale_file = stale_debug_dir / "stale_from_old_run.txt"
+    stale_file.write_text("stale", encoding="utf-8")
+    stale_error_log = output_dir / "error.log"
+    stale_error_log.write_text("old error", encoding="utf-8")
+
+    input_path = tmp_path / "sample.txt"
+    input_path.write_text(_sample_text(), encoding="utf-8")
+    pipeline = _build_pipeline()
+    run = pipeline.run_file(input_path=input_path, output_dir=output_dir)
+
+    assert run.success is True
+    assert run.debug_dir is not None
+    assert not stale_file.exists()
+    assert not stale_error_log.exists()
+    assert (run.debug_dir / "summary.json").exists()
+
+
+def test_mobile_performance_ends_as_nfr_not_fr_in_final_spec():
+    text = (
+        "Customers should reserve tables online.\n"
+        "The website should load quickly on mobile devices."
     )
+    pipeline = _build_pipeline(runner=QualityAsFRRunner(), generation_config={"max_retries": 0})
+    run = pipeline.run_text(text)
+    assert run.success is True
+    assert any("load quickly on mobile" in item.text.lower() for item in run.spec.non_functional_requirements)
+    assert not any("load quickly on mobile" in item.text.lower() for item in run.spec.functional_requirements)
 
-    output_dir = tmp_path / "output"
-    runner = _StaticRunner(
-        {
-            "project_summary": "raw model output",
-            "functional_requirements": [],
-            "non_functional_requirements": [],
-            "constraints": [],
-            "assumptions": [
-                {
-                    "text": "Maybe attendance analytics can be added later.",
-                    "evidence": ["U1"],
-                }
-            ],
-            "open_questions": [],
-            "follow_up_questions": [],
-            "question_decisions": [
-                {
-                    "text": "Attendance analytics deadline",
-                    "decision": "already_asked",
-                    "evidence": ["U2"],
-                }
-            ],
-        }
+
+def test_stage_1_placeholder_echo_uses_fallback_and_pipeline_succeeds():
+    text = (
+        "Customers should reserve tables online.\n"
+        "The website should load quickly on mobile devices.\n"
+        "The design should feel clean and modern."
     )
-
-    result = run_pipeline(
-        input_path=conversation_path,
-        output_dir=output_dir,
-        runner=runner,
-        prompt_config={
-            "generation": {},
-            "enable_final_refinement": False,
-            "enable_chunking": False,
-            "enable_sanity_postprocess": True,
-            "enable_rule_postprocess": False,
-            "enforce_requester_source_only": True,
-            "enforce_llm_question_decisions": True,
-            "auto_follow_up_fallback": False,
-        },
-    )
-
-    assumption_decisions = [
-        item for item in result.spec.question_decisions if "attendance analytics" in item.text.lower()
-    ]
-    assert assumption_decisions
-    assert assumption_decisions[0].decision == "needs_follow_up"
-    assert result.spec.follow_up_questions
-    assert any("attendance analytics" in item.lower() for item in result.spec.follow_up_questions)
-
-
-def test_pipeline_filters_pm_sourced_spec_items_and_keeps_support_decision(tmp_path) -> None:
-    conversation_path = tmp_path / "conversation_no_label.txt"
-    conversation_path.write_text(
-        "\n".join(
-            [
-                "Client: Our school clubs need an app to publish weekly meeting schedules.",
-                "PM: You should give us specific deadline for attendance analytics.",
-                "Client: I think it's okay for May 3rd.",
-            ]
-        ),
-        encoding="utf-8",
-    )
-
-    output_dir = tmp_path / "output"
-    runner = _StaticRunner(
-        {
-            "project_summary": "raw model output",
-            "functional_requirements": [
-                {
-                    "id": "FR1",
-                    "text": "Our school clubs need an app to publish weekly meeting schedules.",
-                    "priority": "medium",
-                    "evidence": ["U1"],
-                },
-                {
-                    "id": "FR2",
-                    "text": "You should give us specific deadline for attendance analytics.",
-                    "priority": "medium",
-                    "evidence": ["U2"],
-                },
-            ],
-            "non_functional_requirements": [],
-            "constraints": [
-                {
-                    "text": "You should give us specific deadline for attendance analytics.",
-                    "evidence": ["U2"],
-                }
-            ],
-            "assumptions": [],
-            "open_questions": [
-                {
-                    "text": "What is the deadline for attendance analytics?",
-                    "evidence": ["U2"],
-                }
-            ],
-            "follow_up_questions": ["What is the deadline for attendance analytics?"],
-            "question_decisions": [],
-        }
-    )
-
-    result = run_pipeline(
-        input_path=conversation_path,
-        output_dir=output_dir,
-        runner=runner,
-        prompt_config={
-            "generation": {},
-            "enable_final_refinement": False,
-            "enable_chunking": False,
-            "enable_sanity_postprocess": True,
-            "enable_rule_postprocess": False,
-            "enforce_requester_source_only": True,
-            "enforce_llm_question_decisions": True,
-            "auto_follow_up_fallback": False,
-        },
-    )
-
-    assert len(result.spec.functional_requirements) == 1
-    assert not result.spec.constraints
-    assert not result.spec.open_questions
-    decision_texts = [item.text.lower() for item in result.spec.question_decisions]
-    assert any("deadline for attendance analytics" in text for text in decision_texts)
-    assert any(item.decision == "resolved" for item in result.spec.question_decisions)
-
-
-def test_pipeline_consolidates_and_trims_question_outputs(tmp_path) -> None:
-    conversation_path = tmp_path / "conversation.txt"
-    conversation_path.write_text(
-        "\n".join(
-            [
-                "Client: It should be easy to use for freshmen.",
-                "PM: What is the target response time?",
-                "Client: Under 2 seconds.",
-            ]
-        ),
-        encoding="utf-8",
-    )
-
-    output_dir = tmp_path / "output"
-    runner = _StaticRunner(
-        {
-            "project_summary": "raw model output",
-            "functional_requirements": [],
-            "non_functional_requirements": [
-                {
-                    "id": "NFR1",
-                    "text": "It should be easy to use for freshmen.",
-                    "priority": "medium",
-                    "evidence": ["U1"],
-                }
-            ],
-            "constraints": [],
-            "assumptions": [],
-            "open_questions": [
-                {"text": "What is the target response time?", "evidence": ["U2"]},
-                {"text": "What response time target do you need?", "evidence": ["U2"]},
-                {"text": "How should ease of use be measured?", "evidence": ["U1"]},
-            ],
-            "follow_up_questions": [
-                "What response time target do you need?",
-                "How should ease of use be measured?",
-                "What measurable acceptance criteria define easy to use?",
-            ],
-            "question_decisions": [
-                {
-                    "text": "What is the target response time?",
-                    "decision": "already_asked",
-                    "evidence": ["U2"],
-                },
-                {
-                    "text": "Response time target",
-                    "decision": "resolved",
-                    "evidence": ["U2", "U3"],
-                },
-                {
-                    "text": "How should ease of use be measured?",
-                    "decision": "needs_follow_up",
-                    "suggested_follow_up": "How should ease of use be measured?",
-                    "evidence": ["U1"],
-                },
-                {
-                    "text": "What measurable criteria define easy to use?",
-                    "decision": "needs_follow_up",
-                    "suggested_follow_up": "What measurable acceptance criteria define easy to use?",
-                    "evidence": ["U1"],
-                },
-            ],
-        }
-    )
-
-    result = run_pipeline(
-        input_path=conversation_path,
-        output_dir=output_dir,
-        runner=runner,
-        prompt_config={
-            "generation": {},
-            "enable_final_refinement": False,
-            "enable_chunking": False,
-            "enable_sanity_postprocess": True,
-            "enable_rule_postprocess": False,
-            "enforce_requester_source_only": True,
-            "enforce_llm_question_decisions": True,
-            "auto_follow_up_fallback": False,
-            "question_topic_similarity_threshold": 0.45,
-            "max_open_questions": 4,
-            "max_question_decisions": 4,
-            "max_follow_up_questions": 1,
-        },
-    )
-
-    assert not any("response time" in item.text.lower() for item in result.spec.open_questions)
-    assert len(result.spec.follow_up_questions) == 1
-    assert any(item.decision == "resolved" for item in result.spec.question_decisions)
-
-
-def test_pipeline_drops_follow_up_for_resolved_topics(tmp_path) -> None:
-    conversation_path = tmp_path / "conversation.txt"
-    conversation_path.write_text(
-        "\n".join(
-            [
-                "Client: Maybe attendance analytics can be added later.",
-                "PM: What is the deadline for attendance analytics?",
-                "Client: May 3rd is okay.",
-            ]
-        ),
-        encoding="utf-8",
-    )
-
-    output_dir = tmp_path / "output"
-    runner = _StaticRunner(
-        {
-            "project_summary": "raw model output",
-            "functional_requirements": [],
-            "non_functional_requirements": [],
-            "constraints": [],
-            "assumptions": [
-                {
-                    "text": "Maybe attendance analytics can be added later.",
-                    "evidence": ["U1"],
-                }
-            ],
-            "open_questions": [],
-            "follow_up_questions": ["What is the deadline for attendance analytics?"],
-            "question_decisions": [
-                {
-                    "text": "attendance analytics deadline",
-                    "decision": "resolved",
-                    "evidence": ["U2", "U3"],
-                }
-            ],
-        }
-    )
-
-    result = run_pipeline(
-        input_path=conversation_path,
-        output_dir=output_dir,
-        runner=runner,
-        prompt_config={
-            "generation": {},
-            "enable_final_refinement": False,
-            "enable_chunking": False,
-            "enable_sanity_postprocess": True,
-            "enable_rule_postprocess": False,
-            "enforce_requester_source_only": True,
-            "enforce_llm_question_decisions": True,
-            "auto_follow_up_fallback": False,
-        },
-    )
-
-    assert any(
-        item.decision == "resolved" and "attendance analytics" in item.text.lower()
-        for item in result.spec.question_decisions
-    )
-    assert not result.spec.follow_up_questions
-
-
-def test_pipeline_llm_centric_mode_skips_rule_heavy_postprocess(tmp_path) -> None:
-    conversation_path = tmp_path / "conversation.txt"
-    conversation_path.write_text(
-        "\n".join(
-            [
-                "Client: Maybe attendance analytics can be added later.",
-                "PM: Can you clarify the deadline?",
-            ]
-        ),
-        encoding="utf-8",
-    )
-
-    output_dir = tmp_path / "output"
-    runner = _StaticRunner(
-        {
-            "project_summary": "raw model output",
-            "functional_requirements": [],
-            "non_functional_requirements": [],
-            "constraints": [],
-            "assumptions": [
-                {
-                    "text": "Maybe attendance analytics can be added later.",
-                    "evidence": ["U1"],
-                }
-            ],
-            "open_questions": [],
-            "follow_up_questions": [],
-            "question_decisions": [],
-        }
-    )
-
-    result = run_pipeline(
-        input_path=conversation_path,
-        output_dir=output_dir,
-        runner=runner,
-        prompt_config={
-            "generation": {},
-            "enable_final_refinement": False,
-            "enable_chunking": False,
-            "llm_centric_mode": True,
-            "llm_centric_align_follow_up": False,
-            "llm_centric_trim_questions": False,
-            "enable_sanity_postprocess": True,
-            "enable_rule_postprocess": True,
-            "enforce_requester_source_only": True,
-            "enforce_llm_question_decisions": True,
-            "auto_follow_up_fallback": True,
-        },
-    )
-
-    assert len(result.spec.assumptions) == 1
-    assert result.spec.question_decisions == []
-    assert result.spec.follow_up_questions == []
-
-
-def test_pipeline_hybrid_flow_runs_role_candidate_classify_render(tmp_path) -> None:
-    conversation_path = tmp_path / "conversation.txt"
-    conversation_path.write_text(
-        "\n".join(
-            [
-                "Client: Club leaders should create and update events.",
-                "Client: It should be easy to use for freshmen.",
-                "Client: Maybe attendance analytics can be added later.",
-                "PM: What is the analytics deadline?",
-            ]
-        ),
-        encoding="utf-8",
-    )
-
-    output_dir = tmp_path / "output"
-    runner = _HybridFlowRunner()
-
-    result = run_pipeline(
-        input_path=conversation_path,
-        output_dir=output_dir,
-        runner=runner,
-        prompt_config={
-            "generation": {},
-            "hybrid_flow_mode": True,
-            "classification_use_mock": True,
-            "llm_retry_on_invalid": 1,
-            "llm_centric_mode": True,
-        },
-    )
-
-    assert "hybrid_role_inference" in runner.stages
-    assert "hybrid_candidate_extraction" in runner.stages
-    assert "hybrid_spec_render" in runner.stages
-
-    assert any("create and update events" in item.text.lower() for item in result.spec.functional_requirements)
-    assert any("easy to use" in item.text.lower() for item in result.spec.non_functional_requirements)
-    assert any("attendance analytics" in item.text.lower() for item in result.spec.assumptions)
-    assert not any("analytics deadline" in item.text.lower() for item in result.spec.open_questions)
-    assert result.spec.follow_up_questions
-
-
-def test_pipeline_hybrid_empty_candidates_recovers_with_rescue(tmp_path) -> None:
-    conversation_path = tmp_path / "conversation.txt"
-    conversation_path.write_text(
-        "\n".join(
-            [
-                "Client: Users should reserve tables online.",
-                "Client: Who can cancel a reservation?",
-            ]
-        ),
-        encoding="utf-8",
-    )
-
-    output_dir = tmp_path / "output"
-    runner = _HybridEmptyCandidateRunner()
-
-    result = run_pipeline(
-        input_path=conversation_path,
-        output_dir=output_dir,
-        runner=runner,
-        prompt_config={
-            "generation": {},
-            "hybrid_flow_mode": True,
-            "hybrid_enable_empty_rescue": True,
-            "classification_use_mock": True,
-            "llm_retry_on_invalid": 1,
-            "llm_centric_mode": True,
-        },
-    )
-
-    assert "hybrid_candidate_extraction" in runner.stages
-    assert "utterance_rescue" in runner.stages
-    assert len(result.spec.functional_requirements) >= 1
+    pipeline = _build_pipeline(runner=Stage1PlaceholderRunner(), generation_config={"max_retries": 0})
+    run = pipeline.run_text(text)
+    assert run.success is True
+    assert run.stage_stats.get("stage_1_fallback_used") is True
+    assert any("stage_1_candidate_extraction used deterministic fallback" in w for w in run.spec.verification_warnings)
+    assert any("load quickly on mobile" in item.text.lower() for item in run.spec.non_functional_requirements)

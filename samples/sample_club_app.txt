@@ -1,0 +1,6 @@
+Our student club needs a scheduling app for weekly events and workshops.
+Members should be able to RSVP and receive reminder notifications before each event.
+Officers need an admin panel to create events and manage attendance.
+The app should be easy to use because many members are first-year students.
+It should work smoothly on both Android and iPhone devices.
+We might add a payment feature for paid workshops in a future semester.

@@ -1,616 +1,617 @@
 [
   {
-    "sample_id": "cafe_website",
-    "conversation": "Client: We need a website for our cafe where customers can see the menu and opening hours.\nClient: Customers should be able to reserve tables online.\nPM: Should staff update menu items themselves?\nClient: Yes, an admin page should let staff edit menu items and prices.\nClient: The site must load fast on mobile because most customers use phones.\nClient: I want a clean and modern design, and maybe online payment later.\nPM: Do you already have a preferred payment provider?",
+    "id": "cafe_website",
+    "conversation_text": "We need a website for our cafe where customers can see today's menu and opening hours.\nCustomers should be able to reserve tables online for specific time slots.\nStaff must be able to update menu items and prices from an admin page.\nMost visitors will use phones, so the site should load quickly on mobile.\nThe design should feel clean and modern.\nWe may add online payment later.",
+    "conversation_units": [
+      {
+        "id": "U1",
+        "text": "We need a website for our cafe where customers can see today's menu and opening hours."
+      },
+      {
+        "id": "U2",
+        "text": "Customers should be able to reserve tables online for specific time slots."
+      },
+      {
+        "id": "U3",
+        "text": "Staff must be able to update menu items and prices from an admin page."
+      },
+      {
+        "id": "U4",
+        "text": "Most visitors will use phones, so the site should load quickly on mobile."
+      },
+      {
+        "id": "U5",
+        "text": "The design should feel clean and modern."
+      },
+      {
+        "id": "U6",
+        "text": "We may add online payment later."
+      }
+    ],
     "gold": {
-      "project_summary": "Cafe needs a customer-facing website with reservations and admin menu management, with mobile performance and unresolved payment details.",
+      "project_summary": "The project is a cafe website with customer-facing pages and a staff admin feature. It also includes mobile performance expectations and unresolved design/payment scope decisions.",
       "functional_requirements": [
         {
-          "id": "FR1",
-          "text": "Customers can view the cafe menu and opening hours.",
-          "priority": "high",
-          "evidence": ["U1"]
+          "text": "The system shall provide a website where customers can view menu items and opening hours.",
+          "source_units": [
+            "U1"
+          ]
         },
         {
-          "id": "FR2",
-          "text": "Customers can reserve tables online.",
-          "priority": "high",
-          "evidence": ["U2"]
+          "text": "The system shall allow customers to reserve tables for specific time slots.",
+          "source_units": [
+            "U2"
+          ]
         },
         {
-          "id": "FR3",
-          "text": "Staff can edit menu items and prices through an admin page.",
-          "priority": "high",
-          "evidence": ["U4"]
+          "text": "The system shall provide an admin page where staff can update menu items and prices.",
+          "source_units": [
+            "U3"
+          ]
         }
       ],
       "non_functional_requirements": [
         {
-          "id": "NFR1",
-          "text": "Website should load quickly on mobile devices.",
-          "priority": "high",
-          "evidence": ["U5"]
-        },
-        {
-          "id": "NFR2",
-          "text": "Interface should have a clean and modern design.",
-          "priority": "medium",
-          "evidence": ["U6"]
-        }
-      ],
-      "constraints": [
-        {
-          "text": "Initial release should prioritize mobile usage patterns.",
-          "evidence": ["U5"]
-        }
-      ],
-      "assumptions": [
-        {
-          "text": "Online payment is out of scope for the initial release and may be added later.",
-          "evidence": ["U6"]
+          "text": "The system should provide a mobile-compatible responsive interface with fast page loading.",
+          "source_units": [
+            "U4"
+          ]
         }
       ],
       "open_questions": [
         {
-          "text": "Which payment provider should be used when online payment is introduced?",
-          "evidence": ["U7"]
+          "text": "What concrete visual criteria define the requested clean and modern style?",
+          "source_units": [
+            "U5"
+          ]
+        },
+        {
+          "text": "Should online payment be included in the current release or postponed?",
+          "source_units": [
+            "U6"
+          ]
         }
       ],
       "follow_up_questions": [
-        "Which payment provider should be integrated for future online payments?",
-        "What measurable target defines acceptable mobile loading speed?"
+        {
+          "text": "Could you share reference websites that represent the desired clean and modern style?",
+          "source_units": [
+            "U5"
+          ]
+        },
+        {
+          "text": "Which payment providers should be supported if online payment is in scope?",
+          "source_units": [
+            "U6"
+          ]
+        }
       ],
-      "utterances": [
+      "notes": [
         {
-          "id": "U1",
-          "speaker": "Client",
-          "text": "We need a website for our cafe where customers can see the menu and opening hours."
+          "text": "Online payment is currently a future-phase item.",
+          "source_units": [
+            "U6"
+          ]
+        }
+      ],
+      "constraints": []
+    }
+  },
+  {
+    "id": "student_club_scheduler",
+    "conversation_text": "Our student club needs a scheduling app for weekly events and workshops.\nMembers should be able to RSVP and receive reminder notifications before each event.\nOfficers need an admin panel to create events and manage attendance.\nThe app should be easy to use because many members are first-year students.\nIt should work smoothly on both Android and iPhone devices.\nWe might add a payment feature for paid workshops in a future semester.",
+    "conversation_units": [
+      {
+        "id": "U1",
+        "text": "Our student club needs a scheduling app for weekly events and workshops."
+      },
+      {
+        "id": "U2",
+        "text": "Members should be able to RSVP and receive reminder notifications before each event."
+      },
+      {
+        "id": "U3",
+        "text": "Officers need an admin panel to create events and manage attendance."
+      },
+      {
+        "id": "U4",
+        "text": "The app should be easy to use because many members are first-year students."
+      },
+      {
+        "id": "U5",
+        "text": "It should work smoothly on both Android and iPhone devices."
+      },
+      {
+        "id": "U6",
+        "text": "We might add a payment feature for paid workshops in a future semester."
+      }
+    ],
+    "gold": {
+      "project_summary": "The project is a club event scheduling app with RSVP, reminders, and officer administration. Usability and cross-platform mobile support are important, while payment remains future scope.",
+      "functional_requirements": [
+        {
+          "text": "The system shall provide scheduling for recurring club events and workshops.",
+          "source_units": [
+            "U1"
+          ]
         },
         {
-          "id": "U2",
-          "speaker": "Client",
-          "text": "Customers should be able to reserve tables online."
+          "text": "The system shall allow members to RSVP and receive event reminder notifications.",
+          "source_units": [
+            "U2"
+          ]
         },
         {
-          "id": "U3",
-          "speaker": "PM",
-          "text": "Should staff update menu items themselves?"
+          "text": "The system shall provide an admin panel for officers to create events and manage attendance.",
+          "source_units": [
+            "U3"
+          ]
+        }
+      ],
+      "non_functional_requirements": [
+        {
+          "text": "The system should provide a simple and beginner-friendly user experience.",
+          "source_units": [
+            "U4"
+          ]
         },
         {
-          "id": "U4",
-          "speaker": "Client",
-          "text": "Yes, an admin page should let staff edit menu items and prices."
+          "text": "The system should support both Android and iOS devices reliably.",
+          "source_units": [
+            "U5"
+          ]
+        }
+      ],
+      "open_questions": [
+        {
+          "text": "How should usability be measured for first-year students?",
+          "source_units": [
+            "U4"
+          ]
         },
         {
-          "id": "U5",
-          "speaker": "Client",
-          "text": "The site must load fast on mobile because most customers use phones."
+          "text": "Is paid workshop payment in scope for the first release?",
+          "source_units": [
+            "U6"
+          ]
+        }
+      ],
+      "follow_up_questions": [
+        {
+          "text": "What user flow should be considered the primary path for first-year students?",
+          "source_units": [
+            "U4"
+          ]
         },
         {
-          "id": "U6",
-          "speaker": "Client",
-          "text": "I want a clean and modern design, and maybe online payment later."
-        },
+          "text": "If payment is included later, which payment methods should be supported?",
+          "source_units": [
+            "U6"
+          ]
+        }
+      ],
+      "notes": [
         {
-          "id": "U7",
-          "speaker": "PM",
-          "text": "Do you already have a preferred payment provider?"
+          "text": "Paid workshop payment is future scope.",
+          "source_units": [
+            "U6"
+          ]
+        }
+      ],
+      "constraints": [
+        {
+          "text": "Paid workshop payment shall be excluded from the initial release scope.",
+          "source_units": [
+            "U6"
+          ]
         }
       ]
     }
   },
   {
-    "sample_id": "school_club_scheduler",
-    "conversation": "Client: Our school clubs need an app to publish weekly meeting schedules.\nClient: Club leaders should create and update events.\nClient: Students should join events and receive reminder notifications.\nClient: It should be easy to use for freshmen.\nClient: Maybe attendance analytics can be added later.\nPM: Who is allowed to cancel events?\nClient: Only club leaders and the student council should cancel events.",
+    "id": "dental_clinic_booking",
+    "conversation_text": "We need an online booking system for our dental clinic.\nPatients should be able to choose a dentist and a time slot.\nReception staff need to approve or reschedule requests from an admin dashboard.\nThe system must be secure because it includes personal information.\nIt should feel simple for older patients.\nMaybe we will add online payment in phase two.",
+    "conversation_units": [
+      {
+        "id": "U1",
+        "text": "We need an online booking system for our dental clinic."
+      },
+      {
+        "id": "U2",
+        "text": "Patients should be able to choose a dentist and a time slot."
+      },
+      {
+        "id": "U3",
+        "text": "Reception staff need to approve or reschedule requests from an admin dashboard."
+      },
+      {
+        "id": "U4",
+        "text": "The system must be secure because it includes personal information."
+      },
+      {
+        "id": "U5",
+        "text": "It should feel simple for older patients."
+      },
+      {
+        "id": "U6",
+        "text": "Maybe we will add online payment in phase two."
+      }
+    ],
     "gold": {
-      "project_summary": "School clubs need schedule publishing and event participation features with role-based cancellation rules and unresolved reminder details.",
+      "project_summary": "The project is a clinic booking platform for patients and reception staff. Security is mandatory, while usability details and payment timeline require clarification.",
       "functional_requirements": [
         {
-          "id": "FR1",
-          "text": "The app publishes weekly club meeting schedules.",
-          "priority": "high",
-          "evidence": ["U1"]
+          "text": "The system shall provide online appointment booking for the dental clinic.",
+          "source_units": [
+            "U1"
+          ]
         },
         {
-          "id": "FR2",
-          "text": "Club leaders can create and update events.",
-          "priority": "high",
-          "evidence": ["U2"]
+          "text": "The system shall allow patients to select a dentist and available time slot.",
+          "source_units": [
+            "U2"
+          ]
         },
         {
-          "id": "FR3",
-          "text": "Students can join events.",
-          "priority": "high",
-          "evidence": ["U3"]
-        },
-        {
-          "id": "FR4",
-          "text": "Students receive reminder notifications for joined events.",
-          "priority": "high",
-          "evidence": ["U3"]
+          "text": "The system shall provide an admin dashboard for staff to approve or reschedule bookings.",
+          "source_units": [
+            "U3"
+          ]
         }
       ],
       "non_functional_requirements": [
         {
-          "id": "NFR1",
-          "text": "The app should be easy to use for freshmen.",
-          "priority": "medium",
-          "evidence": ["U4"]
-        }
-      ],
-      "constraints": [
-        {
-          "text": "Only club leaders and student council members may cancel events.",
-          "evidence": ["U7"]
-        }
-      ],
-      "assumptions": [
-        {
-          "text": "Attendance analytics is deferred to a later phase.",
-          "evidence": ["U5"]
+          "text": "The system shall protect personal information with strong security controls.",
+          "source_units": [
+            "U4"
+          ]
         }
       ],
       "open_questions": [
         {
-          "text": "Which notification channel should be used for reminders?",
-          "evidence": ["U3"]
+          "text": "What specific usability criteria define simple for older patients?",
+          "source_units": [
+            "U5"
+          ]
+        },
+        {
+          "text": "Should online payment be deferred to phase two?",
+          "source_units": [
+            "U6"
+          ]
         }
       ],
       "follow_up_questions": [
-        "Should reminder notifications be sent via push, email, or messaging apps?",
-        "What usability acceptance criteria define 'easy to use for freshmen'?"
+        {
+          "text": "Do you have accessibility requirements such as larger text and reduced interaction steps?",
+          "source_units": [
+            "U5"
+          ]
+        },
+        {
+          "text": "Which compliance and payment provider requirements apply if payment is added later?",
+          "source_units": [
+            "U6"
+          ]
+        }
       ],
-      "utterances": [
+      "notes": [
         {
-          "id": "U1",
-          "speaker": "Client",
-          "text": "Our school clubs need an app to publish weekly meeting schedules."
-        },
+          "text": "Online payment is identified as phase-two scope.",
+          "source_units": [
+            "U6"
+          ]
+        }
+      ],
+      "constraints": [
         {
-          "id": "U2",
-          "speaker": "Client",
-          "text": "Club leaders should create and update events."
-        },
-        {
-          "id": "U3",
-          "speaker": "Client",
-          "text": "Students should join events and receive reminder notifications."
-        },
-        {
-          "id": "U4",
-          "speaker": "Client",
-          "text": "It should be easy to use for freshmen."
-        },
-        {
-          "id": "U5",
-          "speaker": "Client",
-          "text": "Maybe attendance analytics can be added later."
-        },
-        {
-          "id": "U6",
-          "speaker": "PM",
-          "text": "Who is allowed to cancel events?"
-        },
-        {
-          "id": "U7",
-          "speaker": "Client",
-          "text": "Only club leaders and the student council should cancel events."
+          "text": "Online payment shall not be included before phase two.",
+          "source_units": [
+            "U6"
+          ]
         }
       ]
     }
   },
   {
-    "sample_id": "dental_clinic_booking",
-    "conversation": "Client: We need a web system for a dental clinic where patients can book appointments.\nClient: Receptionists must see daily bookings and mark no-shows.\nClient: It has to work on old office PCs with slow internet.\nClient: We cannot exceed a 3 month timeline.\nClient: It should feel simple and user-friendly.\nPM: Do patients need SMS reminders?\nClient: Yes, but we have not chosen an SMS vendor yet.",
+    "id": "gym_class_booking",
+    "conversation_text": "We run a gym and need a class booking app.\nUsers must be able to browse classes, book seats, and cancel bookings.\nTrainers should see participant lists and mark attendance.\nThe app should load fast during evening rush hours.\nThe interface should look modern.\nWe may introduce membership billing later.",
+    "conversation_units": [
+      {
+        "id": "U1",
+        "text": "We run a gym and need a class booking app."
+      },
+      {
+        "id": "U2",
+        "text": "Users must be able to browse classes, book seats, and cancel bookings."
+      },
+      {
+        "id": "U3",
+        "text": "Trainers should see participant lists and mark attendance."
+      },
+      {
+        "id": "U4",
+        "text": "The app should load fast during evening rush hours."
+      },
+      {
+        "id": "U5",
+        "text": "The interface should look modern."
+      },
+      {
+        "id": "U6",
+        "text": "We may introduce membership billing later."
+      }
+    ],
     "gold": {
-      "project_summary": "Dental clinic needs appointment booking and receptionist workflows with performance and schedule constraints plus unresolved SMS integration details.",
+      "project_summary": "The project is a gym class booking app with member booking workflows and trainer operations. Performance is critical during peak traffic and visual style and billing scope are not fully defined.",
       "functional_requirements": [
         {
-          "id": "FR1",
-          "text": "Patients can book appointments online.",
-          "priority": "high",
-          "evidence": ["U1"]
+          "text": "The system shall provide class browsing, seat booking, and booking cancellation.",
+          "source_units": [
+            "U2"
+          ]
         },
         {
-          "id": "FR2",
-          "text": "Receptionists can view daily bookings.",
-          "priority": "high",
-          "evidence": ["U2"]
-        },
-        {
-          "id": "FR3",
-          "text": "Receptionists can mark no-shows.",
-          "priority": "high",
-          "evidence": ["U2"]
-        },
-        {
-          "id": "FR4",
-          "text": "Patients receive SMS reminders for appointments.",
-          "priority": "medium",
-          "evidence": ["U6", "U7"]
+          "text": "The system shall allow trainers to view participant lists and record attendance.",
+          "source_units": [
+            "U3"
+          ]
         }
       ],
       "non_functional_requirements": [
         {
-          "id": "NFR1",
-          "text": "The system should work on old office PCs with slow internet.",
-          "priority": "high",
-          "evidence": ["U3"]
-        },
-        {
-          "id": "NFR2",
-          "text": "The interface should be simple and user-friendly.",
-          "priority": "medium",
-          "evidence": ["U5"]
-        }
-      ],
-      "constraints": [
-        {
-          "text": "Delivery timeline must not exceed three months.",
-          "evidence": ["U4"]
-        }
-      ],
-      "assumptions": [
-        {
-          "text": "SMS vendor selection will happen after initial requirements drafting.",
-          "evidence": ["U7"]
+          "text": "The system should maintain fast response time during evening peak usage.",
+          "source_units": [
+            "U4"
+          ]
         }
       ],
       "open_questions": [
         {
-          "text": "Which SMS vendor will be used for reminders?",
-          "evidence": ["U7"]
+          "text": "What visual references define the modern interface expectation?",
+          "source_units": [
+            "U5"
+          ]
         },
         {
-          "text": "What measurable criteria define 'simple and user-friendly'?",
-          "evidence": ["U5"]
+          "text": "Should membership billing be part of the current release?",
+          "source_units": [
+            "U6"
+          ]
         }
       ],
       "follow_up_questions": [
-        "Which SMS provider should be integrated first?",
-        "What concrete usability metric will be used for acceptance?"
+        {
+          "text": "Can you provide benchmark response-time targets for peak traffic?",
+          "source_units": [
+            "U4"
+          ]
+        },
+        {
+          "text": "Which billing scenarios must be supported if membership billing is included?",
+          "source_units": [
+            "U6"
+          ]
+        }
       ],
-      "utterances": [
+      "notes": [
         {
-          "id": "U1",
-          "speaker": "Client",
-          "text": "We need a web system for a dental clinic where patients can book appointments."
-        },
+          "text": "Membership billing is currently future scope.",
+          "source_units": [
+            "U6"
+          ]
+        }
+      ],
+      "constraints": [
         {
-          "id": "U2",
-          "speaker": "Client",
-          "text": "Receptionists must see daily bookings and mark no-shows."
-        },
-        {
-          "id": "U3",
-          "speaker": "Client",
-          "text": "It has to work on old office PCs with slow internet."
-        },
-        {
-          "id": "U4",
-          "speaker": "Client",
-          "text": "We cannot exceed a 3 month timeline."
-        },
-        {
-          "id": "U5",
-          "speaker": "Client",
-          "text": "It should feel simple and user-friendly."
-        },
-        {
-          "id": "U6",
-          "speaker": "PM",
-          "text": "Do patients need SMS reminders?"
-        },
-        {
-          "id": "U7",
-          "speaker": "Client",
-          "text": "Yes, but we have not chosen an SMS vendor yet."
+          "text": "Membership billing shall not be included in the first release.",
+          "source_units": [
+            "U6"
+          ]
         }
       ]
     }
   },
   {
-    "sample_id": "gym_class_booking",
-    "conversation": "Client: I run a gym and need members to book classes from mobile.\nClient: Trainers should set class capacity and mark attendance.\nClient: We must use our existing Google Workspace login.\nClient: Booking confirmation should arrive within a few seconds.\nClient: Nice to have a leaderboard later.\nPM: Should members be able to cancel bookings anytime?\nClient: Cancellation policy is not decided yet.",
+    "id": "library_room_reservation",
+    "conversation_text": "Our university library needs a room reservation tool.\nStudents should be able to find rooms by time and capacity.\nStaff should be able to block rooms for maintenance.\nMost users will access it from phones.\nIt should be very easy to use.\nWe might add ID card integration in a later phase.",
+    "conversation_units": [
+      {
+        "id": "U1",
+        "text": "Our university library needs a room reservation tool."
+      },
+      {
+        "id": "U2",
+        "text": "Students should be able to find rooms by time and capacity."
+      },
+      {
+        "id": "U3",
+        "text": "Staff should be able to block rooms for maintenance."
+      },
+      {
+        "id": "U4",
+        "text": "Most users will access it from phones."
+      },
+      {
+        "id": "U5",
+        "text": "It should be very easy to use."
+      },
+      {
+        "id": "U6",
+        "text": "We might add ID card integration in a later phase."
+      }
+    ],
     "gold": {
-      "project_summary": "Gym needs mobile class booking with trainer management, SSO integration, and unresolved cancellation rules.",
+      "project_summary": "The project is a library room reservation tool with student search and staff management functions. Mobile-first usage is expected, while usability detail and ID integration scope remain open.",
       "functional_requirements": [
         {
-          "id": "FR1",
-          "text": "Members can book gym classes from mobile devices.",
-          "priority": "high",
-          "evidence": ["U1"]
+          "text": "The system shall provide room search by time and capacity.",
+          "source_units": [
+            "U2"
+          ]
         },
         {
-          "id": "FR2",
-          "text": "Trainers can set class capacity.",
-          "priority": "high",
-          "evidence": ["U2"]
-        },
-        {
-          "id": "FR3",
-          "text": "Trainers can mark class attendance.",
-          "priority": "high",
-          "evidence": ["U2"]
+          "text": "The system shall allow staff to block rooms for maintenance periods.",
+          "source_units": [
+            "U3"
+          ]
         }
       ],
       "non_functional_requirements": [
         {
-          "id": "NFR1",
-          "text": "Booking confirmation should be delivered within a few seconds.",
-          "priority": "medium",
-          "evidence": ["U4"]
-        }
-      ],
-      "constraints": [
-        {
-          "text": "Authentication must use the existing Google Workspace login system.",
-          "evidence": ["U3"]
-        }
-      ],
-      "assumptions": [
-        {
-          "text": "Leaderboard functionality is deferred to a future phase.",
-          "evidence": ["U5"]
+          "text": "The system should provide a mobile-compatible interface optimized for phone usage.",
+          "source_units": [
+            "U4"
+          ]
         }
       ],
       "open_questions": [
         {
-          "text": "What cancellation policy should apply to member bookings?",
-          "evidence": ["U7"]
+          "text": "Which usability metrics should define very easy to use?",
+          "source_units": [
+            "U5"
+          ]
+        },
+        {
+          "text": "Should ID card integration be included in the first release?",
+          "source_units": [
+            "U6"
+          ]
         }
       ],
       "follow_up_questions": [
-        "What cancellation window and penalties should be enforced?",
-        "Do cancellation limits differ by membership tier?"
+        {
+          "text": "Do you require one-handed mobile navigation for the main booking flow?",
+          "source_units": [
+            "U4"
+          ]
+        },
+        {
+          "text": "What external systems are required for future ID card integration?",
+          "source_units": [
+            "U6"
+          ]
+        }
       ],
-      "utterances": [
+      "notes": [
         {
-          "id": "U1",
-          "speaker": "Client",
-          "text": "I run a gym and need members to book classes from mobile."
-        },
+          "text": "ID card integration is a future-phase item.",
+          "source_units": [
+            "U6"
+          ]
+        }
+      ],
+      "constraints": [
         {
-          "id": "U2",
-          "speaker": "Client",
-          "text": "Trainers should set class capacity and mark attendance."
-        },
-        {
-          "id": "U3",
-          "speaker": "Client",
-          "text": "We must use our existing Google Workspace login."
-        },
-        {
-          "id": "U4",
-          "speaker": "Client",
-          "text": "Booking confirmation should arrive within a few seconds."
-        },
-        {
-          "id": "U5",
-          "speaker": "Client",
-          "text": "Nice to have a leaderboard later."
-        },
-        {
-          "id": "U6",
-          "speaker": "PM",
-          "text": "Should members be able to cancel bookings anytime?"
-        },
-        {
-          "id": "U7",
-          "speaker": "Client",
-          "text": "Cancellation policy is not decided yet."
+          "text": "ID card integration shall be treated as a later-phase feature, not initial scope.",
+          "source_units": [
+            "U6"
+          ]
         }
       ]
     }
   },
   {
-    "sample_id": "tutor_slot_platform",
-    "conversation": "Client: We need a platform for volunteer tutors to post available time slots.\nClient: Parents should request slots and receive approval messages.\nClient: The first version is web only, not iOS or Android apps.\nClient: It should look modern.\nPM: Do you need payment processing?\nClient: No payment for now because sessions are free.\nPM: How quickly should approval messages be sent?\nClient: Fast, but I do not have an exact target yet.",
+    "id": "tutor_slot_platform",
+    "conversation_text": "We need a platform where students can book tutoring sessions.\nTutors should set available slots and students should request a slot.\nThe system should send confirmation and reminder emails.\nIt must be reliable around exam periods.\nThe UI should feel simple.\nMaybe group-session support will be added later.",
+    "conversation_units": [
+      {
+        "id": "U1",
+        "text": "We need a platform where students can book tutoring sessions."
+      },
+      {
+        "id": "U2",
+        "text": "Tutors should set available slots and students should request a slot."
+      },
+      {
+        "id": "U3",
+        "text": "The system should send confirmation and reminder emails."
+      },
+      {
+        "id": "U4",
+        "text": "It must be reliable around exam periods."
+      },
+      {
+        "id": "U5",
+        "text": "The UI should feel simple."
+      },
+      {
+        "id": "U6",
+        "text": "Maybe group-session support will be added later."
+      }
+    ],
     "gold": {
-      "project_summary": "Volunteer tutoring platform needs scheduling and approvals with web-only scope and unresolved message latency targets.",
+      "project_summary": "The project is a tutoring booking platform with slot management and email notifications. Reliability during peak exam demand is required, while UI standards and group-session scope need clarification.",
       "functional_requirements": [
         {
-          "id": "FR1",
-          "text": "Volunteer tutors can post available time slots.",
-          "priority": "high",
-          "evidence": ["U1"]
+          "text": "The system shall allow students to book tutoring sessions.",
+          "source_units": [
+            "U1"
+          ]
         },
         {
-          "id": "FR2",
-          "text": "Parents can request tutoring slots.",
-          "priority": "high",
-          "evidence": ["U2"]
+          "text": "The system shall allow tutors to publish available slots and students to request them.",
+          "source_units": [
+            "U2"
+          ]
         },
         {
-          "id": "FR3",
-          "text": "Parents receive approval messages for slot requests.",
-          "priority": "high",
-          "evidence": ["U2"]
+          "text": "The system shall send booking confirmation and reminder emails.",
+          "source_units": [
+            "U3"
+          ]
         }
       ],
       "non_functional_requirements": [
         {
-          "id": "NFR1",
-          "text": "The interface should have a modern visual style.",
-          "priority": "low",
-          "evidence": ["U4"]
-        },
-        {
-          "id": "NFR2",
-          "text": "Approval messages should be delivered quickly.",
-          "priority": "medium",
-          "evidence": ["U8"]
-        }
-      ],
-      "constraints": [
-        {
-          "text": "The first release is web-only and excludes iOS and Android apps.",
-          "evidence": ["U3"]
-        },
-        {
-          "text": "Payment processing is excluded from current scope.",
-          "evidence": ["U6"]
-        }
-      ],
-      "assumptions": [
-        {
-          "text": "Sessions remain free in the first release.",
-          "evidence": ["U6"]
+          "text": "The system should remain reliable during exam-period peak traffic.",
+          "source_units": [
+            "U4"
+          ]
         }
       ],
       "open_questions": [
         {
-          "text": "What exact response-time target defines 'fast' approval messaging?",
-          "evidence": ["U8"]
+          "text": "What usability criteria define a simple user interface?",
+          "source_units": [
+            "U5"
+          ]
+        },
+        {
+          "text": "Should group-session support be included in the first release?",
+          "source_units": [
+            "U6"
+          ]
         }
       ],
       "follow_up_questions": [
-        "What numerical latency SLA should approval messages meet?",
-        "Will payment processing stay out of scope for at least the next milestone?"
-      ],
-      "utterances": [
         {
-          "id": "U1",
-          "speaker": "Client",
-          "text": "We need a platform for volunteer tutors to post available time slots."
+          "text": "Do you have uptime or error-rate targets for exam periods?",
+          "source_units": [
+            "U4"
+          ]
         },
         {
-          "id": "U2",
-          "speaker": "Client",
-          "text": "Parents should request slots and receive approval messages."
-        },
-        {
-          "id": "U3",
-          "speaker": "Client",
-          "text": "The first version is web only, not iOS or Android apps."
-        },
-        {
-          "id": "U4",
-          "speaker": "Client",
-          "text": "It should look modern."
-        },
-        {
-          "id": "U5",
-          "speaker": "PM",
-          "text": "Do you need payment processing?"
-        },
-        {
-          "id": "U6",
-          "speaker": "Client",
-          "text": "No payment for now because sessions are free."
-        },
-        {
-          "id": "U7",
-          "speaker": "PM",
-          "text": "How quickly should approval messages be sent?"
-        },
-        {
-          "id": "U8",
-          "speaker": "Client",
-          "text": "Fast, but I do not have an exact target yet."
-        }
-      ]
-    }
-  },
-  {
-    "sample_id": "library_room_reservation",
-    "conversation": "Client: The university library needs a room reservation tool.\nClient: Students should see room availability and reserve by time block.\nClient: Librarians must be able to block rooms for maintenance.\nClient: The service should be reliable during exam week.\nClient: Maybe we can add QR check-in later.\nPM: Should reservations auto-expire if students do not check in?\nClient: Yes, but we have not decided the timeout.\nClient: We also must keep data on school servers only.",
-    "gold": {
-      "project_summary": "Library room reservation tool needs core booking workflows, maintenance controls, and data-hosting constraints with open policy details.",
-      "functional_requirements": [
-        {
-          "id": "FR1",
-          "text": "Students can view room availability and reserve rooms by time block.",
-          "priority": "high",
-          "evidence": ["U2"]
-        },
-        {
-          "id": "FR2",
-          "text": "Librarians can block rooms for maintenance.",
-          "priority": "high",
-          "evidence": ["U3"]
-        },
-        {
-          "id": "FR3",
-          "text": "Reservations auto-expire when students fail to check in.",
-          "priority": "medium",
-          "evidence": ["U6", "U7"]
+          "text": "How should group sessions differ from one-on-one sessions if added later?",
+          "source_units": [
+            "U6"
+          ]
         }
       ],
-      "non_functional_requirements": [
+      "notes": [
         {
-          "id": "NFR1",
-          "text": "The service should be reliable during exam week.",
-          "priority": "high",
-          "evidence": ["U4"]
+          "text": "Group-session support is currently future scope.",
+          "source_units": [
+            "U6"
+          ]
         }
       ],
       "constraints": [
         {
-          "text": "All reservation data must remain on school-hosted servers.",
-          "evidence": ["U8"]
-        }
-      ],
-      "assumptions": [
-        {
-          "text": "QR check-in will be implemented in a later phase.",
-          "evidence": ["U5"]
-        }
-      ],
-      "open_questions": [
-        {
-          "text": "What timeout duration should trigger reservation auto-expiration?",
-          "evidence": ["U7"]
-        },
-        {
-          "text": "What reliability target is expected during exam week?",
-          "evidence": ["U4"]
-        }
-      ],
-      "follow_up_questions": [
-        "What exact no-show timeout should be configured?",
-        "What uptime or failure-rate target defines reliability during exam week?"
-      ],
-      "utterances": [
-        {
-          "id": "U1",
-          "speaker": "Client",
-          "text": "The university library needs a room reservation tool."
-        },
-        {
-          "id": "U2",
-          "speaker": "Client",
-          "text": "Students should see room availability and reserve by time block."
-        },
-        {
-          "id": "U3",
-          "speaker": "Client",
-          "text": "Librarians must be able to block rooms for maintenance."
-        },
-        {
-          "id": "U4",
-          "speaker": "Client",
-          "text": "The service should be reliable during exam week."
-        },
-        {
-          "id": "U5",
-          "speaker": "Client",
-          "text": "Maybe we can add QR check-in later."
-        },
-        {
-          "id": "U6",
-          "speaker": "PM",
-          "text": "Should reservations auto-expire if students do not check in?"
-        },
-        {
-          "id": "U7",
-          "speaker": "Client",
-          "text": "Yes, but we have not decided the timeout."
-        },
-        {
-          "id": "U8",
-          "speaker": "Client",
-          "text": "We also must keep data on school servers only."
+          "text": "Group-session support shall be excluded from the initial release.",
+          "source_units": [
+            "U6"
+          ]
         }
       ]
     }

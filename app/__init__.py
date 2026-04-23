@@ -1,3 +1,1 @@
-"""Conversation-to-Spec prototype package."""
-
-__all__ = []
+"""Conversation-to-Spec package."""

@@ -1,784 +1,884 @@
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
-from dataclasses import dataclass
-from datetime import datetime
 import json
-import os
+import random
 import re
-import sys
-import threading
 import time
-from typing import Optional
-
-from app.prompt_builder import build_prompt
-from app.utils import normalize_text, resolve_preferred_torch_device
-
-
-@dataclass
-class GenerationResult:
-    model_name: str
-    raw_text: str
-    latency_sec: float
-    prompt_tokens: Optional[int] = None
-    completion_tokens: Optional[int] = None
-
-
-@dataclass
-class ClassificationResult:
-    label: str
-    score: float
-    scores: dict[str, float]
-    latency_sec: float
+from abc import ABC, abstractmethod
+from typing import Any, Optional
 
 
 class BaseModelRunner(ABC):
-    def __init__(self, runner_name: str) -> None:
-        self.runner_name = runner_name
-
-    @abstractmethod
-    def generate_structured_output(self, utterances: list[dict], prompt_config: dict) -> str:
-        """Generate raw model text intended to be valid JSON."""
-
-    def generate_with_metadata(self, utterances: list[dict], prompt_config: dict) -> GenerationResult:
-        start_time = time.perf_counter()
-        raw_text = self.generate_structured_output(utterances=utterances, prompt_config=prompt_config)
-        latency_sec = time.perf_counter() - start_time
-        return GenerationResult(
-            model_name=self.runner_name,
-            raw_text=raw_text,
-            latency_sec=latency_sec,
-        )
-
-    def get_input_token_budget(self, prompt_config: dict) -> int:
-        user_max_input_tokens = prompt_config.get("max_input_tokens")
-        if isinstance(user_max_input_tokens, int) and user_max_input_tokens > 0:
-            return user_max_input_tokens
-        return 2048
-
-    @staticmethod
-    def _progress_enabled(prompt_config: dict) -> bool:
-        return bool(prompt_config.get("progress_logging", True))
-
-    @staticmethod
-    def _inline_progress_enabled(prompt_config: dict) -> bool:
-        return bool(prompt_config.get("single_line_progress", True))
-
-    def _progress_log(self, prompt_config: dict, message: str) -> None:
-        if not self._progress_enabled(prompt_config):
-            return
-        timestamp = datetime.now().strftime("%H:%M:%S")
-        print(f"[{timestamp}] [{self.runner_name}] {message}", flush=True)
-
-
-class BaseClassificationRunner(ABC):
-    def __init__(self, runner_name: str) -> None:
-        self.runner_name = runner_name
-
-    @abstractmethod
-    def classify(self, text: str, labels: list[str]) -> ClassificationResult:
-        """Classify text into one of labels."""
-
-
-class MockClassificationRunner(BaseClassificationRunner):
-    def __init__(self) -> None:
-        super().__init__(runner_name="mock-classifier")
-
-    def classify(self, text: str, labels: list[str]) -> ClassificationResult:
-        start = time.perf_counter()
-        lowered = text.lower()
-        candidate_scores: dict[str, float] = {label: 0.01 for label in labels}
-
-        def add_if_contains(label_key: str, hints: tuple[str, ...], boost: float) -> None:
-            for label in labels:
-                if label_key not in label.lower():
-                    continue
-                if any(hint in lowered for hint in hints):
-                    candidate_scores[label] += boost
-
-        add_if_contains("functional", ("must", "need", "allow", "create", "update", "join", "publish"), 0.9)
-        add_if_contains("non", ("easy to use", "simple", "fast", "user-friendly", "secure", "reliable"), 0.9)
-        add_if_contains("constraint", ("deadline", "budget", "only", "must use", "cannot", "can't"), 0.9)
-        add_if_contains("assumption", ("maybe", "later", "for now", "not decided", "if possible"), 0.9)
-        add_if_contains("question", ("?", "clarify", "who", "what", "when", "how", "which"), 0.9)
-
-        best_label = max(labels, key=lambda label: candidate_scores.get(label, 0.0))
-        total = sum(candidate_scores.values()) or 1.0
-        normalized = {label: score / total for label, score in candidate_scores.items()}
-        score = normalized.get(best_label, 0.0)
-        return ClassificationResult(
-            label=best_label,
-            score=score,
-            scores=normalized,
-            latency_sec=time.perf_counter() - start,
-        )
-
-
-class HuggingFaceZeroShotClassificationRunner(BaseClassificationRunner):
     def __init__(self, model_name: str) -> None:
-        super().__init__(runner_name=model_name)
         self.model_name = model_name
-        self._classifier = None
+        self.last_generation_info: dict[str, Any] = {}
 
-    def _load(self) -> None:
-        if self._classifier is not None:
+    @abstractmethod
+    def generate(self, prompt: str, generation_config: dict) -> str:
+        raise NotImplementedError
+
+    def close(self) -> None:
+        return None
+
+
+class HFModelRunner(BaseModelRunner):
+    def __init__(self, model_name: str) -> None:
+        super().__init__(model_name=model_name)
+        self._torch = None
+        self._tokenizer = None
+        self._model = None
+        self._device = None
+
+    def _ensure_loaded(self) -> None:
+        if self._model is not None and self._tokenizer is not None:
             return
 
-        from transformers import pipeline
+        try:
+            import torch  # type: ignore
+            from transformers import AutoModelForCausalLM, AutoTokenizer  # type: ignore
+        except Exception as exc:  # pragma: no cover - depends on optional runtime env
+            raise RuntimeError(
+                "Transformers and torch are required for HFModelRunner."
+            ) from exc
 
-        device, _ = resolve_preferred_torch_device()
+        self._torch = torch
+        self._device = "cuda" if torch.cuda.is_available() else "cpu"
 
-        self._classifier = pipeline(
-            task="zero-shot-classification",
-            model=self.model_name,
-            device=device,
-        )
+        self._tokenizer = AutoTokenizer.from_pretrained(self.model_name)
+        dtype = torch.float16 if self._device == "cuda" else torch.float32
+        model_kwargs: dict[str, Any] = {"torch_dtype": dtype}
+        if self._device == "cuda":
+            model_kwargs["device_map"] = "auto"
 
-    def classify(self, text: str, labels: list[str]) -> ClassificationResult:
-        self._load()
-        if self._classifier is None:
-            raise RuntimeError("Zero-shot classifier not initialized")
+        self._model = AutoModelForCausalLM.from_pretrained(self.model_name, **model_kwargs)
+        if self._device == "cpu":
+            self._model.to("cpu")
 
-        start = time.perf_counter()
-        payload = self._classifier(
-            sequences=text,
-            candidate_labels=labels,
-            multi_label=False,
-        )
-        latency = time.perf_counter() - start
+        if self._tokenizer.pad_token_id is None and self._tokenizer.eos_token_id is not None:
+            self._tokenizer.pad_token = self._tokenizer.eos_token
 
-        ranked_labels = payload.get("labels", []) or []
-        ranked_scores = payload.get("scores", []) or []
-        if not ranked_labels:
-            fallback_label = labels[0] if labels else "functional requirement"
-            return ClassificationResult(label=fallback_label, score=0.0, scores={}, latency_sec=latency)
+    def generate(self, prompt: str, generation_config: dict) -> str:
+        self._ensure_loaded()
+        assert self._torch is not None
+        assert self._tokenizer is not None
+        assert self._model is not None
 
-        scores = {
-            str(label): float(score)
-            for label, score in zip(ranked_labels, ranked_scores)
+        seed = generation_config.get("seed")
+        if seed is not None:
+            try:
+                seed_int = int(seed)
+                random.seed(seed_int)
+                self._torch.manual_seed(seed_int)
+                if self._torch.cuda.is_available():
+                    self._torch.cuda.manual_seed_all(seed_int)
+            except Exception:
+                # Seed is best-effort and should not fail generation.
+                pass
+
+        started = time.perf_counter()
+        prompt_text = prompt
+        chat_template = getattr(self._tokenizer, "chat_template", None)
+        if chat_template:
+            try:
+                prompt_text = self._tokenizer.apply_chat_template(
+                    [{"role": "user", "content": prompt}],
+                    tokenize=False,
+                    add_generation_prompt=True,
+                )
+            except Exception:
+                prompt_text = prompt
+
+        encoded = self._tokenizer(prompt_text, return_tensors="pt")
+        encoded = {
+            key: value.to(self._model.device)
+            for key, value in encoded.items()
         }
-        top_label = str(ranked_labels[0])
-        top_score = float(ranked_scores[0]) if ranked_scores else 0.0
-        return ClassificationResult(
-            label=top_label,
-            score=top_score,
-            scores=scores,
-            latency_sec=latency,
-        )
+
+        temperature = float(generation_config.get("temperature", 0.0))
+        do_sample = bool(generation_config.get("do_sample", False))
+        if temperature <= 0:
+            do_sample = False
+
+        with self._torch.no_grad():
+            generated = self._model.generate(
+                **encoded,
+                max_new_tokens=int(generation_config.get("max_new_tokens", 900)),
+                temperature=temperature,
+                top_p=float(generation_config.get("top_p", 1.0)),
+                do_sample=do_sample,
+                pad_token_id=self._tokenizer.pad_token_id,
+                eos_token_id=self._tokenizer.eos_token_id,
+            )
+
+        prompt_tokens = int(encoded["input_ids"].shape[-1])
+        completion_token_ids = generated[0][prompt_tokens:]
+        completion_tokens = int(completion_token_ids.shape[-1])
+        output = self._tokenizer.decode(completion_token_ids, skip_special_tokens=True).strip()
+        stop_sequences = generation_config.get("stop_sequences", [])
+        if isinstance(stop_sequences, list):
+            earliest_cut = None
+            for stop in stop_sequences:
+                if not stop:
+                    continue
+                idx = output.find(str(stop))
+                if idx >= 0 and (earliest_cut is None or idx < earliest_cut):
+                    earliest_cut = idx
+            if earliest_cut is not None:
+                output = output[:earliest_cut].strip()
+        elapsed = time.perf_counter() - started
+
+        self.last_generation_info = {
+            "model_name": self.model_name,
+            "latency_sec": elapsed,
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+        }
+        return output
 
 
 class MockModelRunner(BaseModelRunner):
     FUNCTIONAL_HINTS = (
         "need",
-        "needs",
-        "must",
-        "should",
+        "should be able",
         "allow",
-        "allows",
-        "can",
-        "want",
-        "wants",
-        "create",
-        "update",
-        "edit",
-        "delete",
-        "book",
+        "let",
         "reserve",
-        "schedule",
-        "manage",
-        "view",
+        "book",
+        "admin",
+        "dashboard",
         "track",
-        "notify",
-        "reminder",
-        "login",
-        "sign in",
-        "post",
-        "publish",
-        "request",
-        "approve",
+        "update",
+        "create",
+        "manage",
     )
     NFR_HINTS = (
         "fast",
-        "easy to use",
-        "simple",
-        "clean",
+        "performance",
+        "responsive",
+        "mobile",
         "modern",
-        "user-friendly",
+        "clean",
+        "simple",
+        "easy",
         "secure",
         "reliable",
-        "responsive",
-        "performance",
-        "few seconds",
+        "accessible",
     )
+    FUTURE_HINTS = ("later", "future", "phase 2", "eventually", "maybe")
+    AMBIGUITY_HINTS = ("clean", "modern", "simple", "easy", "probably", "maybe")
     CONSTRAINT_HINTS = (
-        "budget",
-        "deadline",
-        "must use",
-        "cannot",
-        "can't",
-        "within",
-        "only",
+        "not in version one",
+        "not in v1",
+        "not part of the first release",
+        "first release",
         "web only",
-        "on-prem",
-        "on prem",
-        "school servers",
-        "three month",
-        "3 month",
-        "not ios",
-        "not android",
-    )
-    UNCERTAINTY_HINTS = (
-        "maybe",
-        "later",
-        "nice to have",
-        "not decided",
-        "not decided yet",
-        "if possible",
-        "for now",
-        "would be good",
+        "no app",
+        "within",
+        "deadline",
+        "budget",
+        "limited budget",
+        "only staff",
+        "only admin",
+        "only administrators",
+        "must launch",
     )
 
     def __init__(self) -> None:
-        super().__init__(runner_name="mock")
+        super().__init__(model_name="mock")
 
     @staticmethod
-    def _contains_any(text: str, hints: tuple[str, ...]) -> bool:
-        return any(token in text for token in hints)
+    def _extract_units(prompt: str) -> list[tuple[str, str]]:
+        pattern = re.compile(r"^(U\d+)\s+\|\s+(.+)$", flags=re.MULTILINE)
+        return [(m.group(1), m.group(2).strip()) for m in pattern.finditer(prompt)]
 
     @staticmethod
-    def _default_question_from_note(note: str) -> str:
-        stem = note.strip().rstrip(".")
-        if stem.endswith("?"):
-            return stem
-        return f"Can you clarify: {stem}?"
+    def _extract_first_json_object(text: str) -> str | None:
+        start = text.find("{")
+        if start < 0:
+            return None
+        depth = 0
+        in_string = False
+        escaped = False
+        for i in range(start, len(text)):
+            ch = text[i]
+            if in_string:
+                if escaped:
+                    escaped = False
+                elif ch == "\\":
+                    escaped = True
+                elif ch == '"':
+                    in_string = False
+                continue
+            if ch == '"':
+                in_string = True
+            elif ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    return text[start : i + 1]
+        return None
 
-    def generate_structured_output(self, utterances: list[dict], prompt_config: dict) -> str:
-        ambiguous_hints = tuple(token.lower() for token in prompt_config.get("ambiguous_phrases", []))
+    @classmethod
+    def _extract_json_after_label(cls, prompt: str, label: str) -> dict[str, Any]:
+        idx = prompt.find(label)
+        if idx < 0:
+            return {}
+        tail = prompt[idx + len(label) :]
+        block = cls._extract_first_json_object(tail)
+        if not block:
+            return {}
+        try:
+            parsed = json.loads(block)
+            if isinstance(parsed, dict):
+                return parsed
+        except Exception:
+            return {}
+        return {}
 
-        functional_items: list[dict] = []
-        non_functional_items: list[dict] = []
-        constraints: list[dict] = []
-        assumptions: list[dict] = []
-        open_questions: list[dict] = []
-        follow_up_questions: list[str] = []
-        question_decisions: list[dict] = []
+    @staticmethod
+    def _rewrite_requirement(text: str, prefix: str) -> str:
+        normalized = text.strip().rstrip(".")
+        lowered = normalized.lower()
 
-        dedupe_guard: set[tuple[str, str]] = set()
-        question_dedupe_guard: set[str] = set()
+        if lowered.startswith("we need "):
+            rest = normalized[8:].strip()
+            return f"{prefix} provide {rest}."
+        if lowered.startswith("i need "):
+            rest = normalized[7:].strip()
+            return f"{prefix} provide {rest}."
+        if lowered.startswith("we want "):
+            rest = normalized[8:].strip()
+            return f"{prefix} provide {rest}."
+        if lowered.startswith("i want "):
+            rest = normalized[7:].strip()
+            return f"{prefix} provide {rest}."
+        if lowered.startswith("customers should be able to "):
+            rest = normalized[28:].strip()
+            return f"{prefix} allow customers to {rest}."
+        if lowered.startswith("users should be able to "):
+            rest = normalized[24:].strip()
+            return f"{prefix} allow users to {rest}."
+        if lowered.startswith("staff must be able to "):
+            rest = normalized[22:].strip()
+            return f"{prefix} allow staff to {rest}."
+        if lowered.startswith("the site must "):
+            rest = normalized[14:].strip()
+            return f"{prefix} {rest}."
+        if lowered.startswith("it should "):
+            rest = normalized[10:].strip()
+            return f"{prefix} {rest}."
+        if lowered.startswith("the app should "):
+            rest = normalized[15:].strip()
+            return f"{prefix} {rest}."
+        if lowered.startswith("most visitors will use phones"):
+            return (
+                f"{prefix} provide a mobile-first experience with fast loading for phone users."
+            )
+        if lowered.startswith("the design should feel "):
+            rest = normalized[23:].strip()
+            return f"{prefix} follow a {rest} visual style."
 
-        def append_item(bucket_name: str, bucket: list[dict], text: str, evidence_id: str) -> None:
-            key = (bucket_name, normalize_text(text))
-            if key in dedupe_guard:
-                return
-            dedupe_guard.add(key)
-            bucket.append({"text": text.strip(), "evidence": [evidence_id]})
+        if not normalized:
+            normalized = "support the described behavior"
+        return f"{prefix} {normalized[0].lower() + normalized[1:]}."
 
-        def append_question_decision(
-            text: str,
-            decision: str,
-            evidence_id: str,
-            suggested_follow_up: str | None = None,
-        ) -> None:
-            key = f"{decision}|{normalize_text(text)}"
-            if not text.strip() or key in question_dedupe_guard:
-                return
-            question_dedupe_guard.add(key)
-            question_decisions.append(
+    @staticmethod
+    def _rewrite_constraint(text: str) -> str:
+        normalized = text.strip().rstrip(".")
+        lowered = normalized.lower()
+        if "may add" in lowered or "might add" in lowered:
+            feature = normalized
+            feature = re.sub(r"^(we|i)\s+(may|might)\s+add\s+", "", feature, flags=re.IGNORECASE)
+            feature = feature.strip()
+            if feature:
+                return f"The feature '{feature}' shall not be included in the initial release."
+        if "web only" in lowered or ("website" in lowered and "not" in lowered and "app" in lowered):
+            return "The initial solution shall be delivered as a web application only."
+        if "budget" in lowered:
+            return "The initial scope should remain limited to fit the available project budget."
+        if "within" in lowered or "must launch" in lowered or "deadline" in lowered:
+            return "The implementation scope shall be planned to meet the stated delivery timeline."
+        if "only staff" in lowered or "only admin" in lowered or "only administrators" in lowered:
+            return "Administrative functions shall be restricted to authorized staff or administrators."
+        return f"The project shall satisfy this boundary: {normalized}."
+
+    @staticmethod
+    def _build_summary(units: list[tuple[str, str]]) -> str:
+        if not units:
+            return (
+                "The conversation describes a software project but lacks clear requirements. "
+                "Clarification is required before implementation."
+            )
+        first = units[0][1].rstrip(".")
+        summary = (
+            f"The conversation outlines a software project focused on {first.lower()}. "
+            "It includes feature requests, quality expectations, and unresolved points "
+            "that require clarification before implementation."
+        )
+        return summary
+
+    def _stage_1_candidates(self, units: list[tuple[str, str]]) -> dict[str, Any]:
+        candidates: list[dict[str, Any]] = []
+        cid = 1
+        for uid, text in units:
+            lowered = text.lower()
+            if any(hint in lowered for hint in self.FUNCTIONAL_HINTS):
+                candidates.append(
+                    {
+                        "id": f"C{cid}",
+                        "kind": "possible_requirement",
+                        "text": text.rstrip("."),
+                        "source_units": [uid],
+                    }
+                )
+                cid += 1
+            if any(hint in lowered for hint in self.NFR_HINTS):
+                candidates.append(
+                    {
+                        "id": f"C{cid}",
+                        "kind": "possible_quality_expectation",
+                        "text": text.rstrip("."),
+                        "source_units": [uid],
+                    }
+                )
+                cid += 1
+            if any(hint in lowered for hint in self.FUTURE_HINTS):
+                candidates.append(
+                    {
+                        "id": f"C{cid}",
+                        "kind": "possible_future_scope",
+                        "text": text.rstrip("."),
+                        "source_units": [uid],
+                    }
+                )
+                cid += 1
+            if any(hint in lowered for hint in self.CONSTRAINT_HINTS):
+                candidates.append(
+                    {
+                        "id": f"C{cid}",
+                        "kind": "possible_constraint",
+                        "text": text.rstrip("."),
+                        "source_units": [uid],
+                    }
+                )
+                cid += 1
+            if "?" in text or any(hint in lowered for hint in self.AMBIGUITY_HINTS):
+                candidates.append(
+                    {
+                        "id": f"C{cid}",
+                        "kind": "possible_ambiguity",
+                        "text": text.rstrip("."),
+                        "source_units": [uid],
+                    }
+                )
+                cid += 1
+                candidates.append(
+                    {
+                        "id": f"C{cid}",
+                        "kind": "possible_followup_trigger",
+                        "text": text.rstrip("."),
+                        "source_units": [uid],
+                    }
+                )
+                cid += 1
+        return {"candidates": candidates}
+
+    def _stage_2_classify(self, candidates: list[dict[str, Any]]) -> dict[str, Any]:
+        out: list[dict[str, Any]] = []
+        for item in candidates:
+            cid = str(item.get("id", "")).strip() or "C0"
+            text = str(item.get("text", "")).strip()
+            kind = str(item.get("kind", "")).strip()
+            source_units = [str(x).strip() for x in item.get("source_units", []) if str(x).strip()]
+            lowered = text.lower()
+
+            final_type = "discard"
+            reason = "Not useful for final specification."
+            has_future = any(h in lowered for h in self.FUTURE_HINTS)
+            has_constraint = any(h in lowered for h in self.CONSTRAINT_HINTS)
+
+            if kind == "possible_constraint":
+                if has_future and not (
+                    "not in version one" in lowered
+                    or "not in v1" in lowered
+                    or "not part of the first release" in lowered
+                    or "web only" in lowered
+                    or "no app" in lowered
+                ):
+                    final_type = "note"
+                    reason = "Future possibility is noted, but no explicit current boundary is fixed."
+                elif has_constraint:
+                    final_type = "constraint"
+                    reason = "Explicit project boundary or implementation limitation is stated."
+                elif any(h in lowered for h in self.AMBIGUITY_HINTS):
+                    final_type = "open_question"
+                    reason = "Constraint intent exists but details are under-specified."
+                else:
+                    final_type = "constraint"
+                    reason = "Represents a project boundary."
+            elif kind == "possible_future_scope" or has_future:
+                final_type = "note"
+                reason = "Future/optional scope should be tracked as note."
+            elif kind == "possible_followup_trigger":
+                final_type = "follow_up_trigger"
+                reason = "Requires concrete clarification before implementation."
+            elif kind == "possible_ambiguity" or "?" in text:
+                final_type = "open_question"
+                reason = "Ambiguity should stay unresolved until clarified."
+            elif kind == "possible_quality_expectation":
+                if any(h in lowered for h in self.AMBIGUITY_HINTS):
+                    final_type = "open_question"
+                    reason = "Quality expectation is vague and needs clarification."
+                else:
+                    final_type = "non_functional_requirement"
+                    reason = "Describes quality expectations."
+            elif kind == "possible_requirement":
+                if any(h in lowered for h in self.AMBIGUITY_HINTS):
+                    final_type = "open_question"
+                    reason = "Potential requirement is too vague."
+                elif has_constraint:
+                    final_type = "constraint"
+                    reason = "Statement encodes a clear boundary rather than pure behavior."
+                elif any(h in lowered for h in self.NFR_HINTS) and not any(
+                    h in lowered for h in ("allow", "reserve", "book", "update", "create", "manage")
+                ):
+                    final_type = "non_functional_requirement"
+                    reason = "Behavior is mostly quality-oriented."
+                else:
+                    final_type = "functional_requirement"
+                    reason = "Represents system behavior/capability."
+
+            out.append(
                 {
-                    "text": text.strip(),
-                    "decision": decision,
-                    "suggested_follow_up": suggested_follow_up,
-                    "evidence": [evidence_id],
+                    "id": cid,
+                    "final_type": final_type,
+                    "reason": reason,
+                    "source_units": source_units,
+                }
+            )
+        return {"classified_candidates": out}
+
+    def _stage_3_rewrite(self, classified_candidates: list[dict[str, Any]]) -> dict[str, Any]:
+        rewritten: list[dict[str, Any]] = []
+        rid = 1
+        for item in classified_candidates:
+            ctype = str(item.get("final_type", "")).strip()
+            if ctype not in {"functional_requirement", "non_functional_requirement", "constraint"}:
+                continue
+            text = str(item.get("reason_text", "")).strip() or str(item.get("text", "")).strip()
+            if not text:
+                text = str(item.get("reason", "")).strip()
+            if not text:
+                continue
+            if ctype == "functional_requirement":
+                rewritten_text = self._rewrite_requirement(text, "The system shall")
+            elif ctype == "non_functional_requirement":
+                rewritten_text = self._rewrite_requirement(text, "The system should")
+            else:
+                rewritten_text = self._rewrite_constraint(text)
+            rewritten.append(
+                {
+                    "id": f"R{rid}",
+                    "type": ctype,
+                    "text": rewritten_text,
+                    "source_units": [str(x).strip() for x in item.get("source_units", []) if str(x).strip()],
+                }
+            )
+            rid += 1
+        return {"rewritten_items": rewritten}
+
+    def _stage_4_open_questions(
+        self,
+        classified_candidates: list[dict[str, Any]],
+        rewritten_items: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        questions: list[dict[str, Any]] = []
+        for item in classified_candidates:
+            ftype = str(item.get("final_type", "")).strip()
+            if ftype not in {"open_question", "follow_up_trigger", "constraint"}:
+                continue
+            source_units = [str(x).strip() for x in item.get("source_units", []) if str(x).strip()]
+            reason = str(item.get("reason", "")).strip().rstrip(".")
+            text = str(item.get("text", "")).strip().lower()
+            if ftype == "constraint" and ("budget" in text or "budget" in reason.lower()):
+                q = "What budget boundary should be treated as a hard constraint for the initial release?"
+            elif ftype == "constraint" and ("within" in text or "deadline" in text or "launch" in text):
+                q = "What exact launch date or deadline is required for the first release?"
+            elif ftype == "constraint" and ("only staff" in text or "only admin" in text):
+                q = "Which actions must be restricted to staff or administrators?"
+            elif ftype == "constraint":
+                q = "Can you clarify this boundary as a hard initial-release constraint?"
+            elif "design" in reason.lower() or "style" in reason.lower():
+                q = "What concrete design references define the expected style?"
+            else:
+                q = "Could you clarify the unresolved intent for this item?"
+            if source_units:
+                questions.append({"text": q, "source_units": source_units})
+
+        if not questions and rewritten_items:
+            questions.append(
+                {
+                    "text": "Which requirement details are still unresolved for the first release?",
+                    "source_units": [rewritten_items[0].get("source_units", ["U1"])[0]],
+                }
+            )
+        return {"open_questions": questions}
+
+    def _stage_5_followups(
+        self,
+        classified_candidates: list[dict[str, Any]],
+        rewritten_items: list[dict[str, Any]],
+        open_questions: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        questions: list[dict[str, Any]] = []
+        for item in classified_candidates:
+            ftype = str(item.get("final_type", "")).strip()
+            if ftype not in {"follow_up_trigger", "constraint", "note"}:
+                continue
+            source_units = [str(x).strip() for x in item.get("source_units", []) if str(x).strip()]
+            text = str(item.get("text", "")).strip().lower()
+            reason = str(item.get("reason", "")).strip().lower()
+
+            if ftype == "note":
+                q = "Should this future-scope item be included in the first release plan?"
+            elif "budget" in text or "budget" in reason:
+                q = "What budget range should we plan against for the first release?"
+            elif "within" in text or "deadline" in text or "launch" in text:
+                q = "What delivery date should be treated as the committed target?"
+            elif "only staff" in text or "only admin" in text:
+                q = "Which exact admin actions require restricted access controls?"
+            else:
+                q = "What decision is needed next to proceed with implementation?"
+
+            if source_units:
+                questions.append({"text": q, "source_units": source_units})
+
+        for item in open_questions:
+            text = str(item.get("text", "")).strip().rstrip("?")
+            source_units = [str(x).strip() for x in item.get("source_units", []) if str(x).strip()]
+            if not text or not source_units:
+                continue
+            questions.append(
+                {
+                    "text": f"What decision should we make to resolve: {text}?",
+                    "source_units": source_units,
                 }
             )
 
-        for utterance in utterances:
-            text = utterance["text"].strip()
-            lower_text = text.lower()
-            evidence_id = utterance["id"]
-            speaker = str(utterance.get("speaker", "")).strip().lower()
-
-            if not text:
-                continue
-
-            if "?" in text:
-                append_item(
-                    "open_question",
-                    open_questions,
-                    text,
-                    evidence_id,
-                )
-                if speaker in {"pm", "developer", "dev", "engineer", "team lead", "assistant", "analyst", "개발자"}:
-                    append_question_decision(
-                        text=text,
-                        decision="already_asked",
-                        evidence_id=evidence_id,
-                    )
-                else:
-                    append_question_decision(
-                        text=text,
-                        decision="needs_follow_up",
-                        evidence_id=evidence_id,
-                        suggested_follow_up=text,
-                    )
-                continue
-
-            if self._contains_any(lower_text, self.CONSTRAINT_HINTS):
-                append_item("constraint", constraints, text, evidence_id)
-
-            if self._contains_any(lower_text, self.UNCERTAINTY_HINTS):
-                append_item("assumption", assumptions, text, evidence_id)
-                append_question_decision(
-                    text=text,
-                    decision="needs_follow_up",
-                    evidence_id=evidence_id,
-                    suggested_follow_up=f"Can you clarify: {text.rstrip('.')}?",
-                )
-
-            ambiguous_detected = self._contains_any(lower_text, ambiguous_hints) if ambiguous_hints else False
-            if self._contains_any(lower_text, self.NFR_HINTS):
-                if ambiguous_detected and not re.search(r"\d", lower_text):
-                    append_item(
-                        "open_question",
-                        open_questions,
-                        f"Ambiguous quality target needs clarification: {text}",
-                        evidence_id,
-                    )
-                    append_question_decision(
-                        text=text,
-                        decision="needs_follow_up",
-                        evidence_id=evidence_id,
-                        suggested_follow_up=f"How should we measure this quality requirement: {text.rstrip('.')}?",
-                    )
-                elif "easy" in lower_text or "simple" in lower_text or "user-friendly" in lower_text:
-                    append_question_decision(
-                        text=text,
-                        decision="needs_follow_up",
-                        evidence_id=evidence_id,
-                        suggested_follow_up=f"What measurable acceptance criteria define: {text.rstrip('.')}?",
-                    )
-                append_item("non_functional", non_functional_items, text, evidence_id)
-                continue
-
-            if self._contains_any(lower_text, self.FUNCTIONAL_HINTS):
-                append_item("functional", functional_items, text, evidence_id)
-
-        for idx, item in enumerate(functional_items, start=1):
-            item["id"] = f"FR{idx}"
-            item["priority"] = "medium"
-
-        for idx, item in enumerate(non_functional_items, start=1):
-            item["id"] = f"NFR{idx}"
-            item["priority"] = "medium"
-
-        if not follow_up_questions:
-            for note in open_questions[:5]:
-                follow_up_questions.append(self._default_question_from_note(note["text"]))
-
-        if not follow_up_questions and assumptions:
-            follow_up_questions.append("Which assumed items should be in scope for the first release?")
-
-        if not follow_up_questions:
-            for item in question_decisions:
-                if item["decision"] != "needs_follow_up":
-                    continue
-                suggested = (item.get("suggested_follow_up") or "").strip()
-                if suggested:
-                    follow_up_questions.append(suggested)
-
-        if utterances:
-            speakers = sorted({utterance["speaker"] for utterance in utterances})
-            project_summary = (
-                f"Draft requirements extracted from {len(utterances)} utterances involving "
-                f"{', '.join(speakers)}."
+        if not questions and rewritten_items:
+            questions.append(
+                {
+                    "text": "What is the highest-priority requirement for the first release?",
+                    "source_units": [rewritten_items[0].get("source_units", ["U1"])[0]],
+                }
             )
+        return {"follow_up_questions": questions}
+
+    def _stage_6_summary(
+        self,
+        units: list[tuple[str, str]],
+        rewritten_items: list[dict[str, Any]],
+        open_questions: list[dict[str, Any]],
+        notes: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        feature_count = len(
+            [x for x in rewritten_items if str(x.get("type", "")).strip() in {"functional_requirement", "non_functional_requirement"}]
+        )
+        constraint_count = len(
+            [x for x in rewritten_items if str(x.get("type", "")).strip() == "constraint"]
+        )
+        open_count = len(open_questions)
+        note_count = len(notes)
+        if units:
+            anchor = units[0][1].rstrip(".")
         else:
-            project_summary = "No utterances were provided."
+            anchor = "the discussed software project"
+        summary = (
+            f"The conversation describes a project focused on {anchor.lower()}. "
+            f"It currently includes {feature_count} drafted requirements and {constraint_count} explicit constraints. "
+            f"There are {open_count} unresolved points and {note_count} scope notes that should be confirmed before implementation."
+        )
+        return {"project_summary": summary}
+
+    # Backward-compatible alias for old stage numbering.
+    def _stage_5_summary(
+        self,
+        units: list[tuple[str, str]],
+        rewritten_items: list[dict[str, Any]],
+        open_questions: list[dict[str, Any]],
+        notes: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        return self._stage_6_summary(units, rewritten_items, open_questions, notes)
+
+    def generate(self, prompt: str, generation_config: dict) -> str:
+        started = time.perf_counter()
+        units = self._extract_units(prompt)
+
+        if "CHAIN_STAGE:1_CANDIDATE_EXTRACTION" in prompt:
+            payload = self._stage_1_candidates(units)
+            output = json.dumps(payload, indent=2)
+            elapsed = time.perf_counter() - started
+            self.last_generation_info = {
+                "model_name": self.model_name,
+                "latency_sec": elapsed,
+                "prompt_tokens": None,
+                "completion_tokens": None,
+                "generation_config": generation_config,
+            }
+            return output
+
+        if "CHAIN_STAGE:2_CANDIDATE_CLASSIFICATION" in prompt:
+            parsed = self._extract_json_after_label(prompt, "Candidates JSON:")
+            candidates = parsed.get("candidates", []) if isinstance(parsed, dict) else []
+            payload = self._stage_2_classify(candidates)
+            output = json.dumps(payload, indent=2)
+            elapsed = time.perf_counter() - started
+            self.last_generation_info = {
+                "model_name": self.model_name,
+                "latency_sec": elapsed,
+                "prompt_tokens": None,
+                "completion_tokens": None,
+                "generation_config": generation_config,
+            }
+            return output
+
+        if "CHAIN_STAGE:3_REQUIREMENT_REWRITING" in prompt:
+            parsed = self._extract_json_after_label(prompt, "Classified candidates JSON:")
+            classified = parsed.get("classified_candidates", []) if isinstance(parsed, dict) else []
+            payload = self._stage_3_rewrite(classified)
+            output = json.dumps(payload, indent=2)
+            elapsed = time.perf_counter() - started
+            self.last_generation_info = {
+                "model_name": self.model_name,
+                "latency_sec": elapsed,
+                "prompt_tokens": None,
+                "completion_tokens": None,
+                "generation_config": generation_config,
+            }
+            return output
+
+        if "CHAIN_STAGE:4_OPEN_QUESTION_GENERATION" in prompt:
+            parsed_cls = self._extract_json_after_label(prompt, "Classified candidates JSON:")
+            parsed_rw = self._extract_json_after_label(prompt, "Rewritten items JSON:")
+            classified = (
+                parsed_cls.get("classified_candidates", []) if isinstance(parsed_cls, dict) else []
+            )
+            rewritten = parsed_rw.get("rewritten_items", []) if isinstance(parsed_rw, dict) else []
+            payload = self._stage_4_open_questions(classified, rewritten)
+            output = json.dumps(payload, indent=2)
+            elapsed = time.perf_counter() - started
+            self.last_generation_info = {
+                "model_name": self.model_name,
+                "latency_sec": elapsed,
+                "prompt_tokens": None,
+                "completion_tokens": None,
+                "generation_config": generation_config,
+            }
+            return output
+
+        if "CHAIN_STAGE:5_FOLLOWUP_GENERATION" in prompt:
+            parsed_cls = self._extract_json_after_label(prompt, "Classified candidates JSON:")
+            parsed_rw = self._extract_json_after_label(prompt, "Rewritten items JSON:")
+            parsed_oq = self._extract_json_after_label(prompt, "Open questions JSON:")
+            classified = (
+                parsed_cls.get("classified_candidates", []) if isinstance(parsed_cls, dict) else []
+            )
+            rewritten = parsed_rw.get("rewritten_items", []) if isinstance(parsed_rw, dict) else []
+            open_questions = parsed_oq.get("open_questions", []) if isinstance(parsed_oq, dict) else []
+            payload = self._stage_5_followups(classified, rewritten, open_questions)
+            output = json.dumps(payload, indent=2)
+            elapsed = time.perf_counter() - started
+            self.last_generation_info = {
+                "model_name": self.model_name,
+                "latency_sec": elapsed,
+                "prompt_tokens": None,
+                "completion_tokens": None,
+                "generation_config": generation_config,
+            }
+            return output
+
+        if "CHAIN_STAGE:6_PROJECT_SUMMARY" in prompt:
+            parsed_rw = self._extract_json_after_label(prompt, "Rewritten items JSON:")
+            parsed_oq = self._extract_json_after_label(prompt, "Open questions JSON:")
+            parsed_notes = self._extract_json_after_label(prompt, "Notes JSON:")
+            rewritten = parsed_rw.get("rewritten_items", []) if isinstance(parsed_rw, dict) else []
+            open_questions = parsed_oq.get("open_questions", []) if isinstance(parsed_oq, dict) else []
+            notes = parsed_notes.get("notes", []) if isinstance(parsed_notes, dict) else []
+            payload = self._stage_6_summary(units, rewritten, open_questions, notes)
+            output = json.dumps(payload, indent=2)
+            elapsed = time.perf_counter() - started
+            self.last_generation_info = {
+                "model_name": self.model_name,
+                "latency_sec": elapsed,
+                "prompt_tokens": None,
+                "completion_tokens": None,
+                "generation_config": generation_config,
+            }
+            return output
+
+        # Backward-compatible stage labels.
+        if "CHAIN_STAGE:4_FOLLOWUP_GENERATION" in prompt:
+            parsed_cls = self._extract_json_after_label(prompt, "Classified candidates JSON:")
+            parsed_rw = self._extract_json_after_label(prompt, "Rewritten items JSON:")
+            classified = (
+                parsed_cls.get("classified_candidates", []) if isinstance(parsed_cls, dict) else []
+            )
+            rewritten = parsed_rw.get("rewritten_items", []) if isinstance(parsed_rw, dict) else []
+            payload = self._stage_5_followups(classified, rewritten, [])
+            output = json.dumps(payload, indent=2)
+            elapsed = time.perf_counter() - started
+            self.last_generation_info = {
+                "model_name": self.model_name,
+                "latency_sec": elapsed,
+                "prompt_tokens": None,
+                "completion_tokens": None,
+                "generation_config": generation_config,
+            }
+            return output
+
+        if "CHAIN_STAGE:5_PROJECT_SUMMARY" in prompt:
+            parsed_rw = self._extract_json_after_label(prompt, "Rewritten items JSON:")
+            parsed_oq = self._extract_json_after_label(prompt, "Open questions JSON:")
+            parsed_notes = self._extract_json_after_label(prompt, "Notes JSON:")
+            rewritten = parsed_rw.get("rewritten_items", []) if isinstance(parsed_rw, dict) else []
+            open_questions = parsed_oq.get("open_questions", []) if isinstance(parsed_oq, dict) else []
+            notes = parsed_notes.get("notes", []) if isinstance(parsed_notes, dict) else []
+            payload = self._stage_6_summary(units, rewritten, open_questions, notes)
+            output = json.dumps(payload, indent=2)
+            elapsed = time.perf_counter() - started
+            self.last_generation_info = {
+                "model_name": self.model_name,
+                "latency_sec": elapsed,
+                "prompt_tokens": None,
+                "completion_tokens": None,
+                "generation_config": generation_config,
+            }
+            return output
+
+        fr_items: list[dict[str, Any]] = []
+        nfr_items: list[dict[str, Any]] = []
+        constraint_items: list[dict[str, Any]] = []
+        open_questions: list[dict[str, Any]] = []
+        follow_ups: list[dict[str, Any]] = []
+        notes: list[dict[str, Any]] = []
+
+        for uid, text in units:
+            lowered = text.lower()
+            is_question = "?" in text
+            has_functional_hint = any(hint in lowered for hint in self.FUNCTIONAL_HINTS)
+            has_nfr_hint = any(hint in lowered for hint in self.NFR_HINTS)
+            has_future_hint = any(hint in lowered for hint in self.FUTURE_HINTS)
+            has_ambiguity_hint = any(hint in lowered for hint in self.AMBIGUITY_HINTS)
+            has_constraint_hint = any(hint in lowered for hint in self.CONSTRAINT_HINTS)
+
+            if is_question:
+                open_questions.append({"text": text.rstrip(), "source_units": [uid]})
+                follow_ups.append(
+                    {
+                        "text": f"Please confirm the decision for: {text.rstrip('?')}.",
+                        "source_units": [uid],
+                    }
+                )
+                continue
+
+            if has_functional_hint:
+                fr_items.append(
+                    {
+                        "id": f"FR{len(fr_items) + 1}",
+                        "text": self._rewrite_requirement(text, "The system shall"),
+                        "source_units": [uid],
+                    }
+                )
+
+            if has_nfr_hint:
+                nfr_items.append(
+                    {
+                        "id": f"NFR{len(nfr_items) + 1}",
+                        "text": self._rewrite_requirement(text, "The system should"),
+                        "source_units": [uid],
+                    }
+                )
+
+            if has_future_hint:
+                notes.append(
+                    {
+                        "text": f"Future-scope item: {text.rstrip('.')}.",
+                        "source_units": [uid],
+                    }
+                )
+                follow_ups.append(
+                    {
+                        "text": "Should this future-scope item be included in the current release?",
+                        "source_units": [uid],
+                    }
+                )
+
+            if has_constraint_hint and not has_future_hint:
+                constraint_items.append(
+                    {
+                        "id": f"CON{len(constraint_items) + 1}",
+                        "text": self._rewrite_constraint(text),
+                        "source_units": [uid],
+                    }
+                )
+                follow_ups.append(
+                    {
+                        "text": "Can you confirm this boundary as a hard constraint for the initial release?",
+                        "source_units": [uid],
+                    }
+                )
+
+            if has_ambiguity_hint and not has_future_hint:
+                open_questions.append(
+                    {
+                        "text": f"Clarify expected outcome for: {text.rstrip('.')}.",
+                        "source_units": [uid],
+                    }
+                )
+                follow_ups.append(
+                    {
+                        "text": "Can you provide measurable acceptance criteria for this expectation?",
+                        "source_units": [uid],
+                    }
+                )
+
+        if not fr_items and units:
+            uid, text = units[0]
+            fr_items.append(
+                {
+                    "id": "FR1",
+                    "text": self._rewrite_requirement(text, "The system shall"),
+                    "source_units": [uid],
+                }
+            )
+
+        if not follow_ups and units:
+            follow_ups.append(
+                {
+                    "text": "What is the highest-priority requirement for the first release?",
+                    "source_units": [units[0][0]],
+                }
+            )
 
         payload = {
-            "project_summary": project_summary,
-            "functional_requirements": functional_items,
-            "non_functional_requirements": non_functional_items,
-            "constraints": constraints,
-            "assumptions": assumptions,
+            "project_summary": self._build_summary(units),
+            "functional_requirements": fr_items,
+            "non_functional_requirements": nfr_items,
+            "constraints": constraint_items,
             "open_questions": open_questions,
-            "follow_up_questions": follow_up_questions,
-            "question_decisions": question_decisions,
-            "utterances": utterances,
+            "follow_up_questions": follow_ups,
+            "notes": notes,
+            "conversation_units": [{"id": uid, "text": text} for uid, text in units],
         }
-        return json.dumps(payload, ensure_ascii=False, indent=2)
 
-
-class HuggingFaceModelRunner(BaseModelRunner):
-    def __init__(
-        self,
-        model_name: str,
-        generation_config: Optional[dict] = None,
-        task: Optional[str] = None,
-        context_window_hint: Optional[int] = None,
-    ) -> None:
-        super().__init__(runner_name=model_name)
-        self.model_name = model_name
-        self.generation_config = generation_config or {}
-        self.task = task
-        self._context_window_hint = int(context_window_hint) if context_window_hint else 4096
-
-        self._model = None
-        self._tokenizer = None
-        self._device = None
-        self._device_label = "cpu"
-        self._context_window = self._context_window_hint
-
-    def _resolve_device(self):
-        import torch
-
-        if torch.cuda.is_available():
-            return torch.device("cuda"), "cuda"
-
-        mps_backend = getattr(torch.backends, "mps", None)
-        if mps_backend is not None and mps_backend.is_available():
-            os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
-            return torch.device("mps"), "mps"
-
-        return torch.device("cpu"), "cpu"
-
-    @staticmethod
-    def _infer_context_window(config, tokenizer) -> int:
-        candidates: list[int] = []
-
-        tokenizer_max = getattr(tokenizer, "model_max_length", None)
-        if isinstance(tokenizer_max, int) and 0 < tokenizer_max <= 32768:
-            candidates.append(tokenizer_max)
-
-        for field_name in ("max_position_embeddings", "n_positions", "max_sequence_length"):
-            value = getattr(config, field_name, None)
-            if isinstance(value, int) and 0 < value <= 32768:
-                candidates.append(value)
-
-        if not candidates:
-            return 2048
-
-        # Pick the strictest known bound to avoid index errors.
-        return max(128, min(candidates))
-
-    @staticmethod
-    def _is_oom_error(exc: Exception) -> bool:
-        text = str(exc).lower()
-        return "out of memory" in text or "cuda out of memory" in text or "mps backend out of memory" in text
-
-    def _clear_device_cache(self) -> None:
-        import torch
-
-        if self._device_label == "cuda" and hasattr(torch.cuda, "empty_cache"):
-            torch.cuda.empty_cache()
-        if self._device_label == "mps":
-            mps_mod = getattr(torch, "mps", None)
-            if mps_mod is not None and hasattr(mps_mod, "empty_cache"):
-                mps_mod.empty_cache()
-
-    def _move_model_to_cpu(self) -> None:
-        import torch
-
-        if self._model is None:
-            return
-        self._model = self._model.to(torch.device("cpu"))
-        self._device = torch.device("cpu")
-        self._device_label = "cpu"
-
-    def _load_pipeline(self) -> None:
-        if self._model is not None and self._tokenizer is not None:
-            return
-
-        import torch
-        from transformers import (
-            AutoConfig,
-            AutoModelForCausalLM,
-            AutoModelForSeq2SeqLM,
-            AutoTokenizer,
-        )
-
-        config = AutoConfig.from_pretrained(self.model_name)
-        task = self.task or (
-            "text2text-generation" if getattr(config, "is_encoder_decoder", False) else "text-generation"
-        )
-
-        tokenizer = AutoTokenizer.from_pretrained(self.model_name)
-        if tokenizer.pad_token_id is None and tokenizer.eos_token_id is not None:
-            tokenizer.pad_token = tokenizer.eos_token
-
-        device, device_label = self._resolve_device()
-        dtype = torch.float16 if device_label in {"cuda", "mps"} else torch.float32
-
-        model_kwargs = {"dtype": dtype}
-        try:
-            if task == "text2text-generation":
-                model = AutoModelForSeq2SeqLM.from_pretrained(self.model_name, **model_kwargs)
-            else:
-                model = AutoModelForCausalLM.from_pretrained(self.model_name, **model_kwargs)
-        except Exception:  # noqa: BLE001
-            if task == "text2text-generation":
-                model = AutoModelForSeq2SeqLM.from_pretrained(self.model_name)
-            else:
-                model = AutoModelForCausalLM.from_pretrained(self.model_name)
-
-        model = model.to(device)
-        model.eval()
-
-        self._model = model
-        self._tokenizer = tokenizer
-        self._device = device
-        self._device_label = device_label
-        self._context_window = self._infer_context_window(config=config, tokenizer=tokenizer)
-        self.task = task
-
-    def get_input_token_budget(self, prompt_config: dict) -> int:
-        model_context = self._context_window if self._context_window else self._context_window_hint
-        if model_context <= 0:
-            model_context = self._context_window_hint
-
-        user_max_input_tokens = prompt_config.get("max_input_tokens")
-        if isinstance(user_max_input_tokens, int) and user_max_input_tokens > 0:
-            model_context = min(model_context, user_max_input_tokens)
-
-        max_new_tokens = int(prompt_config.get("generation", {}).get("max_new_tokens", self.generation_config.get("max_new_tokens", 256)))
-
-        if self.task == "text-generation":
-            return max(128, model_context - max_new_tokens - 16)
-
-        return max(128, model_context)
-
-    def _post_process_output(self, prompt: str, generated_text: str) -> str:
-        text = generated_text.strip()
-        if self.task == "text-generation" and text.startswith(prompt):
-            text = text[len(prompt) :].strip()
-        return text
-
-    def generate_structured_output(self, utterances: list[dict], prompt_config: dict) -> str:
-        result = self.generate_with_metadata(utterances=utterances, prompt_config=prompt_config)
-        return result.raw_text
-
-    def generate_with_metadata(self, utterances: list[dict], prompt_config: dict) -> GenerationResult:
-        import torch
-
-        is_first_load = self._model is None or self._tokenizer is None
-        if is_first_load:
-            self._progress_log(prompt_config, "Loading tokenizer/model weights...")
-        self._load_pipeline()
-        if is_first_load:
-            self._progress_log(prompt_config, f"Model loaded on device={self._device_label}.")
-
-        prompt = build_prompt(utterances=utterances, prompt_config=prompt_config)
-
-        generation_kwargs = {
-            "max_new_tokens": 512,
-            "temperature": 0.0,
-            "top_p": 1.0,
-            "do_sample": False,
+        output = json.dumps(payload, indent=2)
+        elapsed = time.perf_counter() - started
+        self.last_generation_info = {
+            "model_name": self.model_name,
+            "latency_sec": elapsed,
+            "prompt_tokens": None,
+            "completion_tokens": None,
+            "generation_config": generation_config,
         }
-        generation_kwargs.update(self.generation_config)
-        generation_kwargs.update(prompt_config.get("generation", {}))
-
-        if self._tokenizer is not None:
-            if self._tokenizer.pad_token_id is not None:
-                generation_kwargs.setdefault("pad_token_id", self._tokenizer.pad_token_id)
-            if self._tokenizer.eos_token_id is not None:
-                generation_kwargs.setdefault("eos_token_id", self._tokenizer.eos_token_id)
-
-        do_sample = bool(generation_kwargs.get("do_sample", False))
-        if not do_sample:
-            generation_kwargs.pop("temperature", None)
-            generation_kwargs.pop("top_p", None)
-            generation_kwargs.pop("top_k", None)
-
-        if self._tokenizer is None or self._model is None or self._device is None:
-            raise RuntimeError("Model runner not initialized properly")
-
-        max_input_tokens = self.get_input_token_budget(prompt_config=prompt_config)
-
-        tokenized = self._tokenizer(
-            prompt,
-            return_tensors="pt",
-            truncation=True,
-            max_length=max_input_tokens,
-        )
-        model_inputs = {key: value.to(self._device) for key, value in tokenized.items()}
-        prompt_token_count = int(tokenized["input_ids"].shape[-1])
-        max_new_tokens = int(generation_kwargs.get("max_new_tokens", 0))
-        self._progress_log(
-            prompt_config,
-            (
-                f"Starting generation "
-                f"(prompt_tokens={prompt_token_count}, max_input_tokens={max_input_tokens}, "
-                f"max_new_tokens={max_new_tokens}, device={self._device_label})"
-            ),
-        )
-
-        if self._device_label == "mps":
-            generation_kwargs.setdefault("use_cache", False)
-
-        heartbeat_sec_raw = prompt_config.get("progress_heartbeat_sec", 10)
-        try:
-            heartbeat_sec = max(2, int(heartbeat_sec_raw))
-        except (TypeError, ValueError):
-            heartbeat_sec = 10
-
-        stop_heartbeat = threading.Event()
-        inline_progress = self._inline_progress_enabled(prompt_config) and sys.stdout.isatty()
-        inline_heartbeat_printed = False
-        inline_last_len = 0
-
-        def inline_heartbeat_log(elapsed: int) -> None:
-            nonlocal inline_heartbeat_printed
-            nonlocal inline_last_len
-            timestamp = datetime.now().strftime("%H:%M:%S")
-            line = f"[{timestamp}] [{self.runner_name}] Generation in progress... {elapsed}s elapsed"
-            padded = line
-            if len(line) < inline_last_len:
-                padded += " " * (inline_last_len - len(line))
-            sys.stdout.write("\r" + padded)
-            sys.stdout.flush()
-            inline_last_len = len(line)
-            inline_heartbeat_printed = True
-
-        def finalize_inline_heartbeat_line() -> None:
-            nonlocal inline_heartbeat_printed
-            if inline_progress and inline_heartbeat_printed:
-                sys.stdout.write("\n")
-                sys.stdout.flush()
-                inline_heartbeat_printed = False
-
-        def heartbeat() -> None:
-            elapsed = 0
-            while not stop_heartbeat.wait(heartbeat_sec):
-                elapsed += heartbeat_sec
-                if inline_progress:
-                    inline_heartbeat_log(elapsed)
-                else:
-                    self._progress_log(prompt_config, f"Generation in progress... {elapsed}s elapsed")
-
-        heartbeat_thread = threading.Thread(target=heartbeat, daemon=True)
-        if self._progress_enabled(prompt_config):
-            heartbeat_thread.start()
-
-        start_time = time.perf_counter()
-        try:
-            try:
-                with torch.no_grad():
-                    generated = self._model.generate(**model_inputs, **generation_kwargs)
-            finally:
-                stop_heartbeat.set()
-                if heartbeat_thread.is_alive():
-                    heartbeat_thread.join(timeout=0.2)
-                finalize_inline_heartbeat_line()
-        except RuntimeError as exc:
-            if not self._is_oom_error(exc) or self._device_label == "cpu":
-                raise
-
-            self._progress_log(prompt_config, "OOM detected on accelerator; retrying generation on CPU.")
-            self._clear_device_cache()
-            self._move_model_to_cpu()
-            cpu_inputs = {key: value.to(self._device) for key, value in tokenized.items()}
-            retry_kwargs = dict(generation_kwargs)
-            retry_kwargs["max_new_tokens"] = min(int(retry_kwargs.get("max_new_tokens", 256)), 256)
-            with torch.no_grad():
-                generated = self._model.generate(**cpu_inputs, **retry_kwargs)
-        latency_sec = time.perf_counter() - start_time
-        self._progress_log(prompt_config, f"Generation completed in {latency_sec:.2f}s.")
-
-        if generated.ndim != 2 or generated.shape[0] == 0:
-            generated_text = ""
-            completion_token_count = 0
-        elif self.task == "text-generation":
-            prompt_token_count = model_inputs["input_ids"].shape[-1]
-            completion_ids = generated[0][prompt_token_count:]
-            generated_text = self._tokenizer.decode(completion_ids, skip_special_tokens=True).strip()
-            completion_token_count = int(completion_ids.shape[-1]) if completion_ids.ndim == 1 else 0
-        else:
-            completion_ids = generated[0]
-            generated_text = self._tokenizer.decode(completion_ids, skip_special_tokens=True).strip()
-            completion_token_count = int(completion_ids.shape[-1]) if completion_ids.ndim == 1 else 0
-
-        cleaned_output = self._post_process_output(prompt=prompt, generated_text=generated_text)
-
-        prompt_tokens = int(tokenized["input_ids"].shape[-1])
-        completion_tokens = completion_token_count
-
-        return GenerationResult(
-            model_name=self.runner_name,
-            raw_text=cleaned_output,
-            latency_sec=latency_sec,
-            prompt_tokens=prompt_tokens,
-            completion_tokens=completion_tokens,
-        )
-
-
-def available_model_keys(models_config: dict) -> list[str]:
-    return list(models_config.get("models", {}).keys())
-
-
-def resolve_generation_config(models_config: dict, model_key: str) -> dict:
-    defaults = dict(models_config.get("generation_defaults", {}))
-    model_entry = models_config.get("models", {}).get(model_key, {})
-    defaults.update(model_entry.get("generation", {}))
-    return defaults
-
-
-def create_model_runner(
-    model_key: Optional[str],
-    models_config: dict,
-    use_mock: bool = False,
-) -> BaseModelRunner:
-    if use_mock:
-        return MockModelRunner()
-
-    models = models_config.get("models", {})
-    if model_key is None:
-        model_key = models_config.get("default_model")
-
-    if model_key is None:
-        raise ValueError("No model key provided and no default model configured")
-
-    model_entry = models.get(model_key)
-    default_context_window_hint = int(models_config.get("default_context_window_hint", 4096))
-
-    if model_entry is None:
-        generation = dict(models_config.get("generation_defaults", {}))
-        return HuggingFaceModelRunner(
-            model_name=model_key,
-            generation_config=generation,
-            context_window_hint=default_context_window_hint,
-        )
-
-    model_type = model_entry.get("type", "huggingface").lower()
-    if model_type == "mock":
-        return MockModelRunner()
-
-    if model_type != "huggingface":
-        raise ValueError(f"Unsupported model type: {model_type}")
-
-    model_name = model_entry.get("model_name", model_key)
-    generation_config = resolve_generation_config(models_config=models_config, model_key=model_key)
-    task = model_entry.get("task")
-    context_window_hint = int(model_entry.get("context_window_hint", default_context_window_hint))
-    return HuggingFaceModelRunner(
-        model_name=model_name,
-        generation_config=generation_config,
-        task=task,
-        context_window_hint=context_window_hint,
-    )
-
-
-def create_classification_runner(prompt_config: dict, use_mock: bool = False) -> BaseClassificationRunner:
-    if use_mock or bool(prompt_config.get("classification_use_mock", False)):
-        return MockClassificationRunner()
-
-    model_name = str(
-        prompt_config.get(
-            "classification_model_name",
-            "MoritzLaurer/ModernBERT-large-zeroshot-v2.0",
-        )
-    ).strip()
-    if not model_name:
-        return MockClassificationRunner()
-
-    return HuggingFaceZeroShotClassificationRunner(model_name=model_name)
+        return output

@@ -1,582 +1,513 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-import json
 from pathlib import Path
-from typing import Any
+from statistics import mean
+from typing import Any, Iterable, Optional
 
-from pydantic import BaseModel, ValidationError
+import json
+import re
 
-from app.parser import parse_conversation_text
-from app.pipeline import PipelineDiagnostics, generate_spec_from_utterances
+from app.pipeline import ConversationToSpecPipeline
+from app.progress import NullProgressReporter
 from app.schemas import SpecOutput
-from app.utils import compute_prf, ensure_directory, mean, normalize_text, safe_divide, slugify
-
-CATEGORY_FUNCTIONAL = "functional"
-CATEGORY_NON_FUNCTIONAL = "non_functional"
-CATEGORY_CONSTRAINT = "constraint"
-CATEGORY_ASSUMPTION = "assumption"
-CATEGORY_OPEN_QUESTION = "open_question"
-
-ALL_CATEGORIES = [
-    CATEGORY_FUNCTIONAL,
-    CATEGORY_NON_FUNCTIONAL,
-    CATEGORY_CONSTRAINT,
-    CATEGORY_ASSUMPTION,
-    CATEGORY_OPEN_QUESTION,
-]
-
-
-class EvalSample(BaseModel):
-    sample_id: str
-    conversation: str
-    gold: SpecOutput
+from app.utils import ensure_dir, model_dump_compat, normalize_text, write_json_file, write_text_file
 
 
 @dataclass
-class EvaluationCounts:
-    req_tp: int = 0
-    req_fp: int = 0
-    req_fn: int = 0
-
-    req_exact_tp: int = 0
-    req_exact_fp: int = 0
-    req_exact_fn: int = 0
-
-    evidence_tp: int = 0
-    evidence_fp: int = 0
-    evidence_fn: int = 0
-
-    evidence_jaccard_sum: float = 0.0
-    evidence_jaccard_count: int = 0
-
-    hallucinated_items: int = 0
-    total_predicted_requirements: int = 0
-
-    open_question_captured: int = 0
-    open_question_gold_total: int = 0
+class SampleStatus:
+    sample_id: str
+    success: bool
+    json_parse_ok: bool
+    pydantic_validation_ok: bool
+    latency_sec: float
+    final_status: str = ""
+    retry_count: int = 0
+    retry_success: bool = False
+    semantic_warning: bool = False
+    stage_failure: Optional[str] = None
+    stage_retry_counts: dict[str, int] = None
+    stage_stats: dict[str, Any] = None
+    error: Optional[str] = None
 
 
-def _flatten_spec_items(spec: SpecOutput) -> list[dict[str, Any]]:
-    items: list[dict[str, Any]] = []
-
-    for item in spec.functional_requirements:
-        items.append(
-            {
-                "category": CATEGORY_FUNCTIONAL,
-                "text": item.text,
-                "evidence": item.evidence,
-            }
-        )
-    for item in spec.non_functional_requirements:
-        items.append(
-            {
-                "category": CATEGORY_NON_FUNCTIONAL,
-                "text": item.text,
-                "evidence": item.evidence,
-            }
-        )
-    for item in spec.constraints:
-        items.append(
-            {
-                "category": CATEGORY_CONSTRAINT,
-                "text": item.text,
-                "evidence": item.evidence,
-            }
-        )
-    for item in spec.assumptions:
-        items.append(
-            {
-                "category": CATEGORY_ASSUMPTION,
-                "text": item.text,
-                "evidence": item.evidence,
-            }
-        )
-    for item in spec.open_questions:
-        items.append(
-            {
-                "category": CATEGORY_OPEN_QUESTION,
-                "text": item.text,
-                "evidence": item.evidence,
-            }
-        )
-
-    return items
+def load_eval_dataset(dataset_path: Path) -> list[dict[str, Any]]:
+    with dataset_path.open("r", encoding="utf-8") as f:
+        payload = json.load(f)
+    if not isinstance(payload, list):
+        raise ValueError("Evaluation dataset must be a JSON list.")
+    return payload
 
 
-def _requirement_text_set(spec: SpecOutput, match_mode: str = "normalized") -> set[str]:
-    texts = [item.text for item in (spec.functional_requirements + spec.non_functional_requirements)]
-
-    output: set[str] = set()
-    for text in texts:
-        raw = text.strip()
-        if not raw:
-            continue
-
-        if match_mode == "exact":
-            output.add(raw)
-        elif match_mode == "normalized":
-            normalized = normalize_text(raw)
-            if normalized:
-                output.add(normalized)
+def _extract_texts(items: Any) -> list[str]:
+    if not isinstance(items, list):
+        return []
+    output: list[str] = []
+    for item in items:
+        if isinstance(item, str):
+            text = item.strip()
+        elif isinstance(item, dict):
+            text = str(item.get("text", "")).strip()
         else:
-            raise ValueError(f"Unsupported match mode: {match_mode}")
-
+            continue
+        if text:
+            output.append(text)
     return output
 
 
-def _text_to_category_map(spec: SpecOutput, match_mode: str = "normalized") -> dict[str, str]:
-    text_to_category: dict[str, str] = {}
-    for item in _flatten_spec_items(spec):
-        raw = str(item["text"]).strip()
-        if not raw:
-            continue
+def _prf(pred_items: set[tuple[str, str]], gold_items: set[tuple[str, str]]) -> dict[str, float]:
+    tp = len(pred_items & gold_items)
+    fp = len(pred_items - gold_items)
+    fn = len(gold_items - pred_items)
+    precision = tp / (tp + fp) if (tp + fp) else 0.0
+    recall = tp / (tp + fn) if (tp + fn) else (1.0 if not gold_items else 0.0)
+    f1 = 2 * precision * recall / (precision + recall) if (precision + recall) else 0.0
 
-        key = raw if match_mode == "exact" else normalize_text(raw)
-        if not key:
-            continue
-
-        text_to_category.setdefault(key, item["category"])
-    return text_to_category
-
-
-def _text_to_evidence_map(spec: SpecOutput, match_mode: str = "normalized") -> dict[tuple[str, str], set[str]]:
-    evidence_map: dict[tuple[str, str], set[str]] = {}
-    for item in _flatten_spec_items(spec):
-        raw = str(item["text"]).strip()
-        key_text = raw if match_mode == "exact" else normalize_text(raw)
-        if not key_text:
-            continue
-
-        key = (item["category"], key_text)
-        evidence_map[key] = set(item["evidence"])
-    return evidence_map
-
-
-def compute_requirement_extraction_counts(
-    pred: SpecOutput,
-    gold: SpecOutput,
-    match_mode: str = "normalized",
-) -> tuple[int, int, int]:
-    pred_set = _requirement_text_set(pred, match_mode=match_mode)
-    gold_set = _requirement_text_set(gold, match_mode=match_mode)
-
-    tp = len(pred_set & gold_set)
-    fp = len(pred_set - gold_set)
-    fn = len(gold_set - pred_set)
-    return tp, fp, fn
-
-
-def compute_type_classification_counts(pred: SpecOutput, gold: SpecOutput) -> dict[str, dict[str, int]]:
-    pred_map = _text_to_category_map(pred, match_mode="normalized")
-    gold_map = _text_to_category_map(gold, match_mode="normalized")
-    all_texts = set(pred_map) | set(gold_map)
-
-    counts: dict[str, dict[str, int]] = {
-        category: {"tp": 0, "fp": 0, "fn": 0} for category in ALL_CATEGORIES
+    return {
+        "precision": precision,
+        "recall": recall,
+        "f1": f1,
+        "tp": float(tp),
+        "fp": float(fp),
+        "fn": float(fn),
     }
 
-    for text_key in all_texts:
-        pred_label = pred_map.get(text_key)
-        gold_label = gold_map.get(text_key)
 
-        for category in ALL_CATEGORIES:
-            if pred_label == category and gold_label == category:
-                counts[category]["tp"] += 1
-            elif pred_label == category and gold_label != category:
-                counts[category]["fp"] += 1
-            elif gold_label == category and pred_label != category:
-                counts[category]["fn"] += 1
-
-    return counts
-
-
-def compute_evidence_linking_counts(pred: SpecOutput, gold: SpecOutput) -> tuple[int, int, int]:
-    pred_map = _text_to_evidence_map(pred, match_mode="normalized")
-    gold_map = _text_to_evidence_map(gold, match_mode="normalized")
-    keys = set(pred_map) | set(gold_map)
-
-    tp = fp = fn = 0
-    for key in keys:
-        pred_evidence = pred_map.get(key, set())
-        gold_evidence = gold_map.get(key, set())
-
-        tp += len(pred_evidence & gold_evidence)
-        fp += len(pred_evidence - gold_evidence)
-        fn += len(gold_evidence - pred_evidence)
-
-    return tp, fp, fn
-
-
-def compute_evidence_jaccard(pred: SpecOutput, gold: SpecOutput) -> tuple[float, int]:
-    pred_map = _text_to_evidence_map(pred, match_mode="normalized")
-    gold_map = _text_to_evidence_map(gold, match_mode="normalized")
-    keys = set(pred_map) | set(gold_map)
-
-    if not keys:
-        return 0.0, 0
-
-    score_sum = 0.0
-    count = 0
-    for key in keys:
-        pred_evidence = pred_map.get(key, set())
-        gold_evidence = gold_map.get(key, set())
-        union = pred_evidence | gold_evidence
-        if not union:
-            continue
-        score_sum += len(pred_evidence & gold_evidence) / len(union)
-        count += 1
-
-    return score_sum, count
-
-
-def compute_hallucination_counts(pred: SpecOutput, gold: SpecOutput) -> tuple[int, int]:
-    pred_set = _requirement_text_set(pred, match_mode="normalized")
-    gold_set = _requirement_text_set(gold, match_mode="normalized")
-    unsupported = len(pred_set - gold_set)
-    return unsupported, len(pred_set)
-
-
-def compute_open_question_recall_counts(pred: SpecOutput, gold: SpecOutput) -> tuple[int, int]:
-    pred_set = {normalize_text(item.text) for item in pred.open_questions if normalize_text(item.text)}
-    gold_set = {normalize_text(item.text) for item in gold.open_questions if normalize_text(item.text)}
-    captured = len(pred_set & gold_set)
-    return captured, len(gold_set)
-
-
-def _empty_prediction_like(utterances: list[dict[str, str]]) -> SpecOutput:
-    return SpecOutput(
-        project_summary="Model output was invalid.",
-        functional_requirements=[],
-        non_functional_requirements=[],
-        constraints=[],
-        assumptions=[],
-        open_questions=[],
-        follow_up_questions=[],
-        utterances=utterances,
-    )
-
-
-def _classify_error(error_text: str | None) -> str:
-    if not error_text:
-        return "none"
-
-    lowered = error_text.lower()
-    if "json" in lowered:
-        return "json_error"
-    if "validation" in lowered or "pydantic" in lowered:
-        return "schema_error"
-    if "out of memory" in lowered or "oom" in lowered:
-        return "oom"
-    if "generation failed" in lowered:
-        return "generation_failure"
-    return "other"
-
-
-def _failure_tags(
-    pred_spec: SpecOutput,
-    gold_spec: SpecOutput,
-    diagnostics: PipelineDiagnostics,
-    extraction_error: str | None,
-) -> list[str]:
-    tags: list[str] = []
-
-    if not diagnostics.first_pass_json_parse_ok:
-        tags.append("json_parse_retry_needed")
-    if not diagnostics.first_pass_pydantic_validation_ok:
-        tags.append("schema_retry_needed")
-    if extraction_error:
-        tags.append(_classify_error(extraction_error))
-
-    unsupported, total_predicted = compute_hallucination_counts(pred_spec, gold_spec)
-    hallucination_rate = safe_divide(unsupported, total_predicted)
-    if hallucination_rate >= 0.5 and total_predicted > 0:
-        tags.append("high_hallucination")
-
-    open_captured, open_total = compute_open_question_recall_counts(pred_spec, gold_spec)
-    if open_total > 0 and open_captured == 0:
-        tags.append("open_question_miss")
-
-    if not pred_spec.functional_requirements and not pred_spec.non_functional_requirements:
-        tags.append("no_requirements_predicted")
-
-    deduped: list[str] = []
-    seen: set[str] = set()
-    for tag in tags:
-        if tag in seen:
-            continue
-        seen.add(tag)
-        deduped.append(tag)
-    return deduped
-
-
-def load_eval_dataset(dataset_path: str | Path) -> list[EvalSample]:
-    path = Path(dataset_path)
-    raw_payload = json.loads(path.read_text(encoding="utf-8"))
-    if not isinstance(raw_payload, list):
-        raise ValueError("Evaluation dataset root must be a list of samples")
-
-    samples: list[EvalSample] = []
-    for item in raw_payload:
-        samples.append(EvalSample.model_validate(item))
-    return samples
-
-
-def evaluate_model_on_dataset(
-    dataset_path: str | Path,
-    runner,
-    prompt_config: dict,
-    eval_output_dir: str | Path,
-    model_label: str,
-) -> dict[str, Any]:
-    samples = load_eval_dataset(dataset_path)
-    model_slug = slugify(model_label)
-    base_output_dir = ensure_directory(Path(eval_output_dir) / model_slug)
-    prediction_dir = ensure_directory(base_output_dir / "predictions")
-
-    counts = EvaluationCounts()
-    type_counts: dict[str, dict[str, int]] = {
-        category: {"tp": 0, "fp": 0, "fn": 0} for category in ALL_CATEGORIES
-    }
-
-    parse_success_count = 0
-    validation_success_count = 0
-    first_pass_parse_success_count = 0
-    first_pass_validation_success_count = 0
-
-    failure_cluster_counts: dict[str, int] = {}
-
-    sample_results: list[dict[str, Any]] = []
-    latencies: list[float] = []
-    prompt_tokens: list[int] = []
-    completion_tokens: list[int] = []
-
+def _gold_category_set(
+    samples: Iterable[dict[str, Any]], category_key: str, normalized: bool = False
+) -> set[tuple[str, str]]:
+    values: set[tuple[str, str]] = set()
     for sample in samples:
-        parsed_utterances = parse_conversation_text(sample.conversation)
-        utterance_dicts = [utterance.model_dump() for utterance in parsed_utterances]
+        sid = str(sample["id"])
+        gold = sample.get("gold", {})
+        for text in _extract_texts(gold.get(category_key, [])):
+            key = normalize_text(text) if normalized else text
+            values.add((sid, key))
+    return values
 
-        raw_output = ""
-        extraction_error = None
 
+def _pred_category_set(
+    predicted_specs: dict[str, SpecOutput], category_key: str, normalized: bool = False
+) -> set[tuple[str, str]]:
+    values: set[tuple[str, str]] = set()
+    for sid, spec in predicted_specs.items():
+        items = getattr(spec, category_key)
+        for item in items:
+            text = item.text.strip()
+            if not text:
+                continue
+            key = normalize_text(text) if normalized else text
+            values.add((sid, key))
+    return values
+
+
+def _stage_stat_value(stats_map: dict[str, Any], primary_key: str, fallback_keys: Iterable[str]) -> Optional[float]:
+    for key in (primary_key, *fallback_keys):
+        if key not in stats_map:
+            continue
         try:
-            pred_spec, generation, diagnostics = generate_spec_from_utterances(
-                utterance_dicts=utterance_dicts,
-                runner=runner,
-                prompt_config=prompt_config,
+            return float(stats_map[key])
+        except Exception:
+            continue
+    return None
+
+
+def compute_metrics(
+    samples: list[dict[str, Any]],
+    predicted_specs: dict[str, SpecOutput],
+    sample_statuses: dict[str, SampleStatus],
+) -> dict[str, Any]:
+    fr_gold = _gold_category_set(samples, "functional_requirements", normalized=False)
+    nfr_gold = _gold_category_set(samples, "non_functional_requirements", normalized=False)
+    con_gold = _gold_category_set(samples, "constraints", normalized=False)
+    oq_gold = _gold_category_set(samples, "open_questions", normalized=False)
+    fu_gold = _gold_category_set(samples, "follow_up_questions", normalized=False)
+    note_gold = _gold_category_set(samples, "notes", normalized=False)
+
+    fr_pred = _pred_category_set(predicted_specs, "functional_requirements", normalized=False)
+    nfr_pred = _pred_category_set(predicted_specs, "non_functional_requirements", normalized=False)
+    con_pred = _pred_category_set(predicted_specs, "constraints", normalized=False)
+    oq_pred = _pred_category_set(predicted_specs, "open_questions", normalized=False)
+    fu_pred = _pred_category_set(predicted_specs, "follow_up_questions", normalized=False)
+    note_pred = _pred_category_set(predicted_specs, "notes", normalized=False)
+
+    fr_metrics = _prf(fr_pred, fr_gold)
+    nfr_metrics = _prf(nfr_pred, nfr_gold)
+    con_metrics = _prf(con_pred, con_gold)
+    oq_metrics = _prf(oq_pred, oq_gold)
+    fu_metrics = _prf(fu_pred, fu_gold)
+    note_metrics = _prf(note_pred, note_gold)
+
+    category_f1 = [
+        fr_metrics["f1"],
+        nfr_metrics["f1"],
+        con_metrics["f1"],
+        oq_metrics["f1"],
+        fu_metrics["f1"],
+        note_metrics["f1"],
+    ]
+    macro_f1 = sum(category_f1) / len(category_f1)
+
+    all_req_pred = fr_pred | nfr_pred | con_pred
+    all_req_gold = fr_gold | nfr_gold | con_gold
+    unsupported = all_req_pred - all_req_gold
+    hallucination_rate = len(unsupported) / len(all_req_pred) if all_req_pred else 0.0
+
+    sample_count = len(sample_statuses)
+    if sample_count:
+        parse_rate = (
+            sum(1 for status in sample_statuses.values() if status.json_parse_ok) / sample_count
+        )
+        validation_rate = (
+            sum(1 for status in sample_statuses.values() if status.pydantic_validation_ok)
+            / sample_count
+        )
+        full_schema_rate = (
+            sum(
+                1
+                for status in sample_statuses.values()
+                if status.json_parse_ok and status.pydantic_validation_ok
             )
-            raw_output = generation.raw_text
-            latencies.append(generation.latency_sec)
-            if generation.prompt_tokens is not None:
-                prompt_tokens.append(generation.prompt_tokens)
-            if generation.completion_tokens is not None:
-                completion_tokens.append(generation.completion_tokens)
-        except Exception as exc:  # noqa: BLE001
-            pred_spec = _empty_prediction_like(utterance_dicts)
-            diagnostics = PipelineDiagnostics(
+            / sample_count
+        )
+        usable_output_rate = (
+            sum(1 for status in sample_statuses.values() if status.success) / sample_count
+        )
+        retry_success_rate = (
+            sum(1 for status in sample_statuses.values() if status.retry_success) / sample_count
+        )
+        semantic_warning_rate = (
+            sum(1 for status in sample_statuses.values() if status.semantic_warning) / sample_count
+        )
+    else:
+        parse_rate = 0.0
+        validation_rate = 0.0
+        full_schema_rate = 0.0
+        usable_output_rate = 0.0
+        retry_success_rate = 0.0
+        semantic_warning_rate = 0.0
+
+    stage_failure_counts: dict[str, int] = {}
+    stage_retry_total = 0
+    stage_retry_observed = 0
+    stage1_candidate_values: list[float] = []
+    stage2_discard_rate_values: list[float] = []
+    stage4_open_question_values: list[float] = []
+    stage5_followup_values: list[float] = []
+    for status in sample_statuses.values():
+        if status.stage_failure:
+            stage_failure_counts[status.stage_failure] = (
+                stage_failure_counts.get(status.stage_failure, 0) + 1
+            )
+        retry_map = status.stage_retry_counts or {}
+        if retry_map:
+            stage_retry_total += sum(int(v) for v in retry_map.values())
+            stage_retry_observed += 1
+        stats_map = status.stage_stats or {}
+        if "stage_1_candidate_count" in stats_map:
+            try:
+                stage1_candidate_values.append(float(stats_map["stage_1_candidate_count"]))
+            except Exception:
+                pass
+        if "stage_2_discard_rate" in stats_map:
+            try:
+                stage2_discard_rate_values.append(float(stats_map["stage_2_discard_rate"]))
+            except Exception:
+                pass
+        stage4_open_question = _stage_stat_value(
+            stats_map,
+            "stage_4_open_question_count",
+            ("stage_4_follow_up_count",),
+        )
+        if stage4_open_question is not None:
+            stage4_open_question_values.append(stage4_open_question)
+        stage5_followup = _stage_stat_value(
+            stats_map,
+            "stage_5_follow_up_count",
+            ("stage_4_follow_up_count",),
+        )
+        if stage5_followup is not None:
+            stage5_followup_values.append(stage5_followup)
+
+    successful_latencies = [s.latency_sec for s in sample_statuses.values() if s.success]
+    avg_latency = mean(successful_latencies) if successful_latencies else 0.0
+    constraint_warning_count = 0
+    for spec in predicted_specs.values():
+        for warning in list(getattr(spec, "verification_warnings", []) or []):
+            if str(warning).lower().startswith("constraints:"):
+                constraint_warning_count += 1
+
+    fr_norm = _prf(
+        _pred_category_set(predicted_specs, "functional_requirements", normalized=True),
+        _gold_category_set(samples, "functional_requirements", normalized=True),
+    )
+    nfr_norm = _prf(
+        _pred_category_set(predicted_specs, "non_functional_requirements", normalized=True),
+        _gold_category_set(samples, "non_functional_requirements", normalized=True),
+    )
+    con_norm = _prf(
+        _pred_category_set(predicted_specs, "constraints", normalized=True),
+        _gold_category_set(samples, "constraints", normalized=True),
+    )
+    avg_stage_4_open_question_count = (
+        mean(stage4_open_question_values) if stage4_open_question_values else 0.0
+    )
+    avg_stage_5_follow_up_count = mean(stage5_followup_values) if stage5_followup_values else 0.0
+
+    return {
+        "sample_count": len(samples),
+        "functional_precision": fr_metrics["precision"],
+        "functional_recall": fr_metrics["recall"],
+        "functional_f1": fr_metrics["f1"],
+        "non_functional_precision": nfr_metrics["precision"],
+        "non_functional_recall": nfr_metrics["recall"],
+        "non_functional_f1": nfr_metrics["f1"],
+        "constraint_precision": con_metrics["precision"],
+        "constraint_recall": con_metrics["recall"],
+        "constraint_f1": con_metrics["f1"],
+        "requirement_type_macro_f1": macro_f1,
+        "open_question_recall": oq_metrics["recall"],
+        "follow_up_question_coverage": fu_metrics["recall"],
+        "hallucination_rate": hallucination_rate,
+        "schema_json_parse_validity_rate": parse_rate,
+        "schema_pydantic_validity_rate": validation_rate,
+        "schema_validity_rate": full_schema_rate,
+        "json_parse_success_rate": parse_rate,
+        "pydantic_validation_success_rate": validation_rate,
+        "retry_success_rate": retry_success_rate,
+        "final_usable_output_rate": usable_output_rate,
+        "semantic_warning_rate": semantic_warning_rate,
+        "avg_stage_retry_count": (
+            stage_retry_total / stage_retry_observed if stage_retry_observed else 0.0
+        ),
+        "avg_stage_1_candidate_count": (
+            mean(stage1_candidate_values) if stage1_candidate_values else 0.0
+        ),
+        "avg_stage_2_discard_rate": (
+            mean(stage2_discard_rate_values) if stage2_discard_rate_values else 0.0
+        ),
+        "avg_stage_4_open_question_count": avg_stage_4_open_question_count,
+        "avg_stage_5_follow_up_count": avg_stage_5_follow_up_count,
+        # Legacy alias retained for old consumers that still expect stage-4 follow-up naming.
+        "avg_stage_4_follow_up_count": avg_stage_5_follow_up_count,
+        "stage_failure_counts": stage_failure_counts,
+        "constraint_semantic_warning_count": constraint_warning_count,
+        "avg_latency_sec": avg_latency,
+        "functional_f1_normalized": fr_norm["f1"],
+        "non_functional_f1_normalized": nfr_norm["f1"],
+        "constraint_f1_normalized": con_norm["f1"],
+    }
+
+
+def _write_sample_debug_artifacts(sample_debug_dir: Path, run: Any) -> None:
+    ensure_dir(sample_debug_dir)
+    attempt_logs = list(getattr(run, "attempt_logs", []) or [])
+    for attempt in attempt_logs:
+        idx = int(attempt.get("attempt_index", 0))
+        stage = str(attempt.get("stage", "stage"))
+        stage_slug = re.sub(r"[^a-zA-Z0-9._-]+", "_", stage).strip("._-") or "stage"
+        prefix = f"{stage_slug}_attempt_{idx:02d}"
+        write_text_file(
+            sample_debug_dir / f"{prefix}_raw.txt",
+            str(attempt.get("raw_output", "")),
+        )
+        repaired = attempt.get("repaired_output")
+        if repaired:
+            write_text_file(
+                sample_debug_dir / f"{prefix}_repaired.txt",
+                str(repaired),
+            )
+        error_message = str(attempt.get("error_message") or "").strip()
+        if error_message:
+            write_text_file(sample_debug_dir / f"{prefix}_error.txt", error_message)
+
+    summary = {
+        "status": getattr(run, "status", ""),
+        "success": bool(getattr(run, "success", False)),
+        "retry_count": int(getattr(run, "retry_count", 0)),
+        "json_parse_ok": bool(getattr(run, "json_parse_ok", False)),
+        "pydantic_validation_ok": bool(getattr(run, "pydantic_validation_ok", False)),
+        "semantic_warnings": list(getattr(run, "semantic_warnings", []) or []),
+        "error_message": getattr(run, "error_message", None),
+        "latency_sec": float(getattr(run, "latency_sec", 0.0)),
+    }
+    write_json_file(sample_debug_dir / "summary.json", summary)
+
+
+def evaluate_model(
+    model_label: str,
+    pipeline: ConversationToSpecPipeline,
+    samples: list[dict[str, Any]],
+    output_dir: Path,
+    progress_reporter: Any | None = None,
+) -> dict[str, Any]:
+    reporter = progress_reporter or NullProgressReporter()
+    predictions_dir = output_dir / "predictions"
+    debug_dir = output_dir / "debug"
+    predictions_dir.mkdir(parents=True, exist_ok=True)
+    debug_dir.mkdir(parents=True, exist_ok=True)
+
+    predicted_specs: dict[str, SpecOutput] = {}
+    statuses: dict[str, SampleStatus] = {}
+    details: list[dict[str, Any]] = []
+    reporter.message(f"Evaluating {model_label} on {len(samples)} samples.")
+
+    for sample_index, sample in enumerate(samples, start=1):
+        sid = str(sample["id"])
+        text = str(sample["conversation_text"])
+        sample_debug_dir = debug_dir / sid
+        reporter.sample_started(
+            sample_index=sample_index,
+            total_samples=len(samples),
+            sample_id=sid,
+        )
+        try:
+            with reporter.sample_scope(
+                sample_index=sample_index,
+                total_samples=len(samples),
+                sample_id=sid,
+            ):
+                run = pipeline.run_text(
+                    conversation_text=text,
+                    progress_reporter=reporter,
+                )
+            _write_sample_debug_artifacts(sample_debug_dir, run)
+            write_text_file(predictions_dir / f"{sid}_raw.txt", run.raw_output)
+
+            if run.success:
+                predicted_specs[sid] = run.spec
+                write_json_file(predictions_dir / f"{sid}_pred.json", model_dump_compat(run.spec))
+            else:
+                write_text_file(
+                    predictions_dir / f"{sid}_error.txt",
+                    run.error_message or "Invalid structured output.",
+                )
+
+            statuses[sid] = SampleStatus(
+                sample_id=sid,
+                success=bool(run.success),
+                json_parse_ok=bool(run.json_parse_ok),
+                pydantic_validation_ok=bool(run.pydantic_validation_ok),
+                latency_sec=float(run.latency_sec) if run.success else 0.0,
+                final_status=str(run.status),
+                retry_count=int(run.retry_count),
+                retry_success=bool(run.success and run.retry_count > 0),
+                semantic_warning=bool(len(run.semantic_warnings) > 0),
+                stage_failure=run.stage_failure,
+                stage_retry_counts=dict(run.stage_retry_counts),
+                stage_stats=dict(run.stage_stats),
+                error=run.error_message,
+            )
+            details.append(
+                {
+                    "sample_id": sid,
+                    "success": bool(run.success),
+                    "status": str(run.status),
+                    "retry_count": int(run.retry_count),
+                    "stage_retry_counts": dict(run.stage_retry_counts),
+                    "stage_failure": run.stage_failure,
+                    "stage_stats": dict(run.stage_stats),
+                    "semantic_warning": bool(len(run.semantic_warnings) > 0),
+                    "latency_sec": float(run.latency_sec) if run.success else 0.0,
+                    "json_parse_ok": bool(run.json_parse_ok),
+                    "pydantic_validation_ok": bool(run.pydantic_validation_ok),
+                    "error": run.error_message,
+                }
+            )
+            reporter.sample_finished(
+                sample_index=sample_index,
+                total_samples=len(samples),
+                sample_id=sid,
+                status=str(run.status),
+                latency_sec=float(run.latency_sec) if run.success else 0.0,
+            )
+        except Exception as exc:
+            statuses[sid] = SampleStatus(
+                sample_id=sid,
+                success=False,
                 json_parse_ok=False,
                 pydantic_validation_ok=False,
-                first_pass_json_parse_ok=False,
-                first_pass_pydantic_validation_ok=False,
-                errors=[str(exc)],
+                latency_sec=0.0,
+                final_status="failed_invalid_output",
+                retry_count=0,
+                retry_success=False,
+                semantic_warning=False,
+                stage_failure="exception",
+                stage_retry_counts={},
+                stage_stats={},
+                error=str(exc),
             )
-            extraction_error = f"Generation failed: {exc}"
-            generation = None
-
-        json_ok = diagnostics.json_parse_ok
-        validation_ok = diagnostics.pydantic_validation_ok
-        first_json_ok = diagnostics.first_pass_json_parse_ok
-        first_validation_ok = diagnostics.first_pass_pydantic_validation_ok
-
-        if json_ok:
-            parse_success_count += 1
-        if validation_ok:
-            validation_success_count += 1
-        if first_json_ok:
-            first_pass_parse_success_count += 1
-        if first_validation_ok:
-            first_pass_validation_success_count += 1
-
-        gold_spec = sample.gold
-
-        req_tp, req_fp, req_fn = compute_requirement_extraction_counts(pred_spec, gold_spec, match_mode="normalized")
-        counts.req_tp += req_tp
-        counts.req_fp += req_fp
-        counts.req_fn += req_fn
-
-        req_exact_tp, req_exact_fp, req_exact_fn = compute_requirement_extraction_counts(
-            pred_spec,
-            gold_spec,
-            match_mode="exact",
-        )
-        counts.req_exact_tp += req_exact_tp
-        counts.req_exact_fp += req_exact_fp
-        counts.req_exact_fn += req_exact_fn
-
-        evidence_tp, evidence_fp, evidence_fn = compute_evidence_linking_counts(pred_spec, gold_spec)
-        counts.evidence_tp += evidence_tp
-        counts.evidence_fp += evidence_fp
-        counts.evidence_fn += evidence_fn
-
-        jaccard_sum, jaccard_count = compute_evidence_jaccard(pred_spec, gold_spec)
-        counts.evidence_jaccard_sum += jaccard_sum
-        counts.evidence_jaccard_count += jaccard_count
-
-        unsupported, predicted_total = compute_hallucination_counts(pred_spec, gold_spec)
-        counts.hallucinated_items += unsupported
-        counts.total_predicted_requirements += predicted_total
-
-        open_captured, open_total = compute_open_question_recall_counts(pred_spec, gold_spec)
-        counts.open_question_captured += open_captured
-        counts.open_question_gold_total += open_total
-
-        sample_type_counts = compute_type_classification_counts(pred_spec, gold_spec)
-        for category in ALL_CATEGORIES:
-            type_counts[category]["tp"] += sample_type_counts[category]["tp"]
-            type_counts[category]["fp"] += sample_type_counts[category]["fp"]
-            type_counts[category]["fn"] += sample_type_counts[category]["fn"]
-
-        req_precision, req_recall, req_f1 = compute_prf(req_tp, req_fp, req_fn)
-
-        failure_tags = _failure_tags(
-            pred_spec=pred_spec,
-            gold_spec=gold_spec,
-            diagnostics=diagnostics,
-            extraction_error=extraction_error,
-        )
-        for tag in failure_tags:
-            failure_cluster_counts[tag] = failure_cluster_counts.get(tag, 0) + 1
-
-        sample_record = {
-            "sample_id": sample.sample_id,
-            "json_parse_ok": json_ok,
-            "pydantic_validation_ok": validation_ok,
-            "first_pass_json_parse_ok": first_json_ok,
-            "first_pass_pydantic_validation_ok": first_validation_ok,
-            "error": extraction_error,
-            "requirement_precision": req_precision,
-            "requirement_recall": req_recall,
-            "requirement_f1": req_f1,
-            "hallucination_rate": safe_divide(unsupported, predicted_total),
-            "failure_tags": failure_tags,
-            "latency_sec": generation.latency_sec if generation is not None else None,
-            "chunks_used": diagnostics.chunks_used,
-            "retries_used": diagnostics.retries_used,
-        }
-        sample_results.append(sample_record)
-
-        sample_slug = slugify(sample.sample_id)
-        (prediction_dir / f"{sample_slug}_raw.txt").write_text(raw_output, encoding="utf-8")
-        (prediction_dir / f"{sample_slug}_pred.json").write_text(
-            json.dumps(pred_spec.model_dump(), ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
-
-    req_precision, req_recall, req_f1 = compute_prf(counts.req_tp, counts.req_fp, counts.req_fn)
-    req_exact_precision, req_exact_recall, req_exact_f1 = compute_prf(
-        counts.req_exact_tp,
-        counts.req_exact_fp,
-        counts.req_exact_fn,
-    )
-
-    category_f1_scores: dict[str, float] = {}
-    for category in ALL_CATEGORIES:
-        _, _, category_f1 = compute_prf(
-            type_counts[category]["tp"],
-            type_counts[category]["fp"],
-            type_counts[category]["fn"],
-        )
-        category_f1_scores[category] = category_f1
-
-    type_macro_f1 = mean(category_f1_scores.values())
-
-    evidence_precision, evidence_recall, evidence_f1 = compute_prf(
-        counts.evidence_tp,
-        counts.evidence_fp,
-        counts.evidence_fn,
-    )
-    evidence_jaccard = safe_divide(counts.evidence_jaccard_sum, counts.evidence_jaccard_count)
-
-    hallucination_rate = safe_divide(
-        counts.hallucinated_items,
-        counts.total_predicted_requirements,
-    )
-    open_question_recall = safe_divide(
-        counts.open_question_captured,
-        counts.open_question_gold_total,
-    )
-
-    aggregate_metrics: dict[str, Any] = {
-        "requirement_precision": req_precision,
-        "requirement_recall": req_recall,
-        "requirement_f1": req_f1,
-        "requirement_exact_precision": req_exact_precision,
-        "requirement_exact_recall": req_exact_recall,
-        "requirement_exact_f1": req_exact_f1,
-        "type_classification_macro_f1": type_macro_f1,
-        "type_f1_by_category": category_f1_scores,
-        "evidence_precision": evidence_precision,
-        "evidence_recall": evidence_recall,
-        "evidence_f1": evidence_f1,
-        "evidence_jaccard": evidence_jaccard,
-        "hallucination_rate": hallucination_rate,
-        "open_question_recall": open_question_recall,
-        "json_parse_success_rate": safe_divide(parse_success_count, len(samples)),
-        "pydantic_validation_success_rate": safe_divide(validation_success_count, len(samples)),
-        "first_pass_json_parse_success_rate": safe_divide(first_pass_parse_success_count, len(samples)),
-        "first_pass_pydantic_validation_success_rate": safe_divide(first_pass_validation_success_count, len(samples)),
-        "avg_latency_sec": mean(latencies),
-        "avg_prompt_tokens": mean(prompt_tokens) if prompt_tokens else None,
-        "avg_completion_tokens": mean(completion_tokens) if completion_tokens else None,
-        "num_samples": len(samples),
-        "failure_clusters": failure_cluster_counts,
-    }
-
-    result_payload = {
-        "model": model_label,
-        "aggregate_metrics": aggregate_metrics,
-        "per_sample": sample_results,
-    }
-
-    (base_output_dir / "metrics.json").write_text(
-        json.dumps(result_payload, ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
-
-    return result_payload
-
-
-def render_comparison_table(model_results: list[dict[str, Any]]) -> str:
-    if not model_results:
-        return "No evaluation results available."
-
-    lines = [
-        "| Model | Req F1 (Norm) | Req F1 (Exact) | Type Macro-F1 | Evidence F1 | Evidence Jaccard | Hallucination Rate | Open Q Recall | JSON Validity | Pydantic Validity | Avg Latency (s) |",
-        "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
-    ]
-
-    for result in model_results:
-        metrics = result.get("aggregate_metrics", {})
-        lines.append(
-            "| {model} | {req_f1:.3f} | {req_exact_f1:.3f} | {type_f1:.3f} | {evidence_f1:.3f} | {evidence_jaccard:.3f} | {hallucination:.3f} | {open_recall:.3f} | {json_valid:.3f} | {pydantic_valid:.3f} | {latency:.3f} |".format(
-                model=result.get("model", "unknown"),
-                req_f1=metrics.get("requirement_f1", 0.0),
-                req_exact_f1=metrics.get("requirement_exact_f1", 0.0),
-                type_f1=metrics.get("type_classification_macro_f1", 0.0),
-                evidence_f1=metrics.get("evidence_f1", 0.0),
-                evidence_jaccard=metrics.get("evidence_jaccard", 0.0),
-                hallucination=metrics.get("hallucination_rate", 0.0),
-                open_recall=metrics.get("open_question_recall", 0.0),
-                json_valid=metrics.get("json_parse_success_rate", 0.0),
-                pydantic_valid=metrics.get("pydantic_validation_success_rate", 0.0),
-                latency=metrics.get("avg_latency_sec", 0.0),
+            write_text_file(predictions_dir / f"{sid}_error.txt", str(exc))
+            details.append(
+                {
+                    "sample_id": sid,
+                    "success": False,
+                    "status": "failed_invalid_output",
+                    "retry_count": 0,
+                    "stage_retry_counts": {},
+                    "stage_failure": "exception",
+                    "stage_stats": {},
+                    "semantic_warning": False,
+                    "latency_sec": 0.0,
+                    "json_parse_ok": False,
+                    "pydantic_validation_ok": False,
+                    "error": str(exc),
+                }
             )
+            reporter.sample_finished(
+                sample_index=sample_index,
+                total_samples=len(samples),
+                sample_id=sid,
+                status="failed_invalid_output",
+                latency_sec=0.0,
+            )
+
+    metrics = compute_metrics(samples, predicted_specs, statuses)
+    write_json_file(output_dir / "metrics.json", metrics)
+    report = {"model": model_label, "metrics": metrics, "samples": details}
+    write_json_file(output_dir / "details.json", report)
+    return report
+
+
+def build_comparison_table(results: dict[str, dict[str, Any]]) -> str:
+    header = (
+        "| model | functional_f1 | non_functional_f1 | constraint_f1 | macro_f1 | "
+        "open_question_recall | follow_up_coverage | hallucination_rate | "
+        "schema_validity_rate | json_parse_success | pydantic_success | "
+        "retry_success | usable_output | semantic_warning | "
+        "stage1_candidates | stage2_discard_rate | stage4_open_questions | stage5_follow_ups | avg_latency_sec |\n"
+    )
+    divider = (
+        "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n"
+    )
+    rows: list[str] = []
+    for model_label, report in results.items():
+        metrics = report.get("metrics", {})
+        rows.append(
+            "| "
+            + " | ".join(
+                [
+                    model_label,
+                    f"{metrics.get('functional_f1', 0.0):.4f}",
+                    f"{metrics.get('non_functional_f1', 0.0):.4f}",
+                    f"{metrics.get('constraint_f1', 0.0):.4f}",
+                    f"{metrics.get('requirement_type_macro_f1', 0.0):.4f}",
+                    f"{metrics.get('open_question_recall', 0.0):.4f}",
+                    f"{metrics.get('follow_up_question_coverage', 0.0):.4f}",
+                    f"{metrics.get('hallucination_rate', 0.0):.4f}",
+                    f"{metrics.get('schema_validity_rate', 0.0):.4f}",
+                    f"{metrics.get('json_parse_success_rate', 0.0):.4f}",
+                    f"{metrics.get('pydantic_validation_success_rate', 0.0):.4f}",
+                    f"{metrics.get('retry_success_rate', 0.0):.4f}",
+                    f"{metrics.get('final_usable_output_rate', 0.0):.4f}",
+                    f"{metrics.get('semantic_warning_rate', 0.0):.4f}",
+                    f"{metrics.get('avg_stage_1_candidate_count', 0.0):.4f}",
+                    f"{metrics.get('avg_stage_2_discard_rate', 0.0):.4f}",
+                    f"{metrics.get('avg_stage_4_open_question_count', metrics.get('avg_stage_4_follow_up_count', 0.0)):.4f}",
+                    f"{metrics.get('avg_stage_5_follow_up_count', metrics.get('avg_stage_4_follow_up_count', 0.0)):.4f}",
+                    f"{metrics.get('avg_latency_sec', 0.0):.4f}",
+                ]
+            )
+            + " |"
         )
-
-    return "\n".join(lines)
-
-
-def load_gold_spec_for_validation(sample_payload: dict[str, Any]) -> SpecOutput:
-    try:
-        return SpecOutput.model_validate(sample_payload)
-    except ValidationError as exc:
-        raise ValueError(f"Invalid gold spec payload: {exc}") from exc
+    return header + divider + "\n".join(rows) + ("\n" if rows else "")

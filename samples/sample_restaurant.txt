@@ -1,0 +1,6 @@
+We need a website for our cafe where customers can see today's menu and opening hours.
+Customers should be able to reserve tables online for specific time slots.
+Staff must be able to update menu items and prices from an admin page.
+Most visitors will use phones, so the site should load quickly on mobile.
+The design should feel clean and modern.
+We may add online payment later.

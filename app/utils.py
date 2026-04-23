@@ -1,80 +1,54 @@
 from __future__ import annotations
 
-from pathlib import Path
+import json
 import re
-import os
-import platform
-from typing import Any, Iterable
+from pathlib import Path
+from typing import Any
 
 import yaml
 
 
-def ensure_directory(path: str | Path) -> Path:
-    target = Path(path)
-    target.mkdir(parents=True, exist_ok=True)
-    return target
+def ensure_dir(path: Path) -> Path:
+    path.mkdir(parents=True, exist_ok=True)
+    return path
 
 
-def load_yaml(path: str | Path) -> dict[str, Any]:
-    yaml_path = Path(path)
-    if not yaml_path.exists():
-        raise FileNotFoundError(f"YAML config not found: {yaml_path}")
-    with yaml_path.open("r", encoding="utf-8") as handle:
-        payload = yaml.safe_load(handle) or {}
-    if not isinstance(payload, dict):
-        raise ValueError(f"YAML root must be an object: {yaml_path}")
-    return payload
+def load_yaml_file(path: Path) -> dict[str, Any]:
+    with path.open("r", encoding="utf-8") as f:
+        loaded = yaml.safe_load(f)
+    return loaded or {}
 
 
-def normalize_text(text: str) -> str:
-    lowered = text.lower().strip()
-    lowered = re.sub(r"[^a-z0-9\s]", " ", lowered)
-    lowered = re.sub(r"\s+", " ", lowered).strip()
-    return lowered
+def write_json_file(path: Path, data: Any) -> None:
+    ensure_dir(path.parent)
+    with path.open("w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
 
 
-def safe_divide(numerator: float, denominator: float) -> float:
-    if denominator == 0:
-        return 0.0
-    return numerator / denominator
+def write_text_file(path: Path, text: str) -> None:
+    ensure_dir(path.parent)
+    path.write_text(text, encoding="utf-8")
 
 
-def compute_prf(tp: int, fp: int, fn: int) -> tuple[float, float, float]:
-    precision = safe_divide(tp, tp + fp)
-    recall = safe_divide(tp, tp + fn)
-    f1 = safe_divide(2 * precision * recall, precision + recall) if (precision + recall) else 0.0
-    return precision, recall, f1
+def model_dump_compat(model_obj: Any) -> dict[str, Any]:
+    if hasattr(model_obj, "model_dump"):
+        return model_obj.model_dump()
+    return model_obj.dict()
 
 
-def mean(values: Iterable[float]) -> float:
-    numbers = list(values)
-    if not numbers:
-        return 0.0
-    return sum(numbers) / len(numbers)
+def model_validate_compat(model_cls: Any, payload: dict[str, Any]) -> Any:
+    if hasattr(model_cls, "model_validate"):
+        return model_cls.model_validate(payload)
+    return model_cls.parse_obj(payload)
 
 
 def slugify(value: str) -> str:
-    slug = value.lower().strip()
-    slug = re.sub(r"[^a-z0-9]+", "_", slug)
-    slug = slug.strip("_")
+    slug = re.sub(r"[^a-zA-Z0-9._-]+", "_", value).strip("._-")
     return slug or "model"
 
-def resolve_preferred_torch_device():
-    import torch
 
-    system = platform.system()
-
-    # macOS -> MPS 우선
-    if system == "Darwin":
-        mps_backend = getattr(torch.backends, "mps", None)
-        if mps_backend is not None and mps_backend.is_available():
-            os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
-            return torch.device("mps"), "mps"
-
-    # Windows -> CUDA 우선
-    elif system == "Windows":
-        if torch.cuda.is_available():
-            return torch.device("cuda"), "cuda"
-
-    # 둘 다 아니면 CPU
-    return torch.device("cpu"), "cpu"
+def normalize_text(value: str) -> str:
+    value = value.lower()
+    value = re.sub(r"[^\w\s]", " ", value)
+    value = re.sub(r"\s+", " ", value).strip()
+    return value
