@@ -8,6 +8,23 @@ Software requirements are often first discussed through informal client-develope
 
 This project addresses that problem with a Python prototype that converts unlabeled English conversation transcripts into structured specification drafts. The objective was to keep the workflow fully local, use only Hugging Face pretrained models, preserve traceability through source-unit IDs, and evaluate the system quantitatively rather than only through examples. The final report focuses on three evidence blocks: a fresh current-pipeline model comparison, a controlled Qwen 3B chain-versus-single-shot comparison, and a controlled Qwen 3B robustness ablation. Because exact text matching can understate semantic success, the final written analysis also includes an artifact-only semantic rescoring pass over the saved prediction JSON files.
 
+## Execution Environment
+All experiments were conducted on a local Windows desktop. This environment is important because the project uses local Hugging Face inference rather than external APIs, so GPU memory, system RAM, and runtime constraints directly affected model selection and latency.
+
+| Component | Specification |
+| --- | --- |
+| Operating system | Windows 11 Home 64-bit, version 10.0.26200 |
+| CPU | Intel Core i7-10700 @ 2.90 GHz |
+| CPU cores | 8 physical cores / 16 logical processors |
+| RAM | 32 GB class system memory |
+| GPU | NVIDIA GeForce RTX 3070 |
+| GPU memory | 8192 MiB VRAM |
+| NVIDIA driver | 591.86 |
+| CUDA version | 13.1 |
+| Python environment | Python 3.12.10 virtual environment |
+
+These hardware limits affected the final experiment design. Very slow or larger local models were excluded from repeated final runs, and latency was interpreted as an operational result rather than only as an implementation detail.
+
 ## Methods
 ### Repository and implementation scope
 The implementation lives in a local Python repository: [GitHub repository](https://github.com/LeeMin-hyeong/NLP). The prototype is CLI-first rather than web-based and focuses on transcript-to-spec generation, validation, evaluation, and experiment logging [1].
@@ -63,14 +80,20 @@ The prototype uses several layers of output hardening: JSON-only prompting, obje
 - `StrictRaw`.
 
 ### Experiments and analysis
-The report integrates three final experiment groups:
-- fresh current-pipeline model reruns on April 24, 2026,
-- controlled RQ2 run `qwen3b_rq2_20260424`,
-- controlled RQ4 run `qwen3b_rq4_20260424`.
-
 `Phi-3.5 Mini` did not finish the rerun end-to-end within the available time window, so its row was reconstructed from five completed prediction artifacts plus one timeout failure. This is explicitly marked in the results table.
 
 Results were analyzed in two layers. First, the standard pipeline metrics kept exact-match precision/recall/F1, schema validity, usable output rate, hallucination rate, open-question recall, follow-up coverage, latency, and the added robustness diagnostics `retry_recovery_rate` and `fallback_rescue_rate`. Second, the final report applies artifact-only semantic rescoring to the saved prediction files. This relaxed scorer groups items by `source_units`, merges multiple prediction lines from the same evidence span, and treats two items as matched when lexical-semantic overlap passes category-specific thresholds. Requirement hallucination is also recomputed in a type-agnostic way so that a semantically grounded requirement is not penalized only because it was phrased differently or assigned the wrong requirement subtype.
+
+Exact-match scoring remains the primary reproducible metric because it is deterministic and easy to audit. Semantic rescoring is used only as a secondary interpretive analysis over frozen prediction artifacts; no model output was regenerated, edited, or manually corrected during this pass. The rescoring was added because requirement drafts often preserve the same implementation intent with different wording, which makes exact string matching overly punitive for a specification-generation task.
+
+The semantic rescoring used fixed category-specific thresholds after lowercasing, punctuation stripping, stop-word removal, and light normalization. Functional requirements required at least `0.40` lexical-semantic token overlap with the gold item, non-functional requirements required `0.35`, constraints required `0.35` plus a boundary or limitation cue when available, and open or follow-up questions required `0.30` because question wording is shorter and more variable. Matches were restricted to the same sample and prioritized items with the same or overlapping `source_units`; items without plausible evidence alignment were not counted as semantic matches. Semantic hallucination was recomputed as the share of predicted requirements that could not be aligned to any gold requirement or constraint in the same sample under these rules.
+
+### Experimental reproducibility controls
+The final evaluation set contains six manually annotated transcripts in `dataset/eval_samples.json`. They cover small but different software domains, including a cafe website, a dental clinic booking system, a library room reservation workflow, a student club scheduler, and a tutoring slot platform. All final comparisons used the same dataset, gold annotation categories, output schema, and metric definitions.
+
+For the chain-versus-single-shot comparison, the fixed factors were the model (`Qwen/Qwen2.5-3B-Instruct`), dataset, decoding configuration, output schema, and evaluation script. The changed factor was only the pipeline mode: the chained run used stage-wise extraction/classification/rewriting/assembly, while the single-shot run asked the same model to produce the final schema directly. For the robustness ablation, the fixed factors were again the model, dataset, schema, and decoding settings; the changed factor was the availability of retry, semantic verification, and strict raw-output handling.
+
+Failed or incomplete runs were handled conservatively. A sample was counted as unusable when the final `SpecOutput` could not be parsed and validated. A model was excluded from the final table if it was not environment-compatible or could not complete enough samples for a meaningful comparison. When a row was reconstructed from existing artifacts, the report marks it explicitly and treats missing samples as failures rather than silently dropping them.
 
 ## Results
 ### Current-pipeline model comparison
@@ -87,7 +110,11 @@ Table 1 summarizes the fresh April 24 rerun of the current chain pipeline on the
 
 ![Figure 1. Current pipeline model comparison with semantic FR](assets/model_screening_overview.png)
 
+![Figure 2. Model comparison: semantic FR F1 versus usable output rate](assets/model_semantic_vs_usable.png)
+
 The rerun shows that exact-match scoring understated how much requirement meaning some models preserved. Under semantic rescoring, `Gemma 3` achieved the strongest functional-requirement fidelity among the completed direct reruns (`FR F1 = 0.6087`) and its relaxed hallucination dropped to `0.0000`, meaning every predicted requirement that survived comparison could be grounded to some gold requirement on the same evidence span. `Qwen 3B` remained the strongest operational balance because it combined `1.0000` schema validity, `1.0000` usable output, moderate latency, and a non-trivial semantic FR score of `0.3636`. `Qwen 1.5B` stayed in the middle with weaker usability but reasonable semantic gains. Reconstructed `Phi-3.5 Mini` also showed high semantic recovery (`0.5600`), but its extreme latency and partial-run status make it a weak deployment candidate. `TinyLlama 1.1B` remained unusable under the current chain prompts.
+
+Figure 2 makes the main trade-off clearer than the table alone. Gemma 3 and Phi-3.5 Mini preserve more functional-requirement meaning when they produce analyzable artifacts, but Qwen 3B is the only compared model that reaches full usable output while still preserving non-trivial semantic requirement content. This supports the report's split interpretation between specification completeness and deployable reliability.
 
 ### Qualitative same-input comparison: Qwen 3B vs Gemma 3
 Table 2 compares outputs generated from the same input samples. This explains why the aggregate metrics and human reading of the drafts point to slightly different conclusions.
@@ -107,7 +134,7 @@ The controlled RQ2 comparison used the same base dataset and the same output sch
 | Chain | 1.0000 | 1.0000 | 0.0909 | 0.3636 | 0.8571 | 0.4286 | 60.5630 |
 | Single-shot | 1.0000 | 1.0000 | 0.0690 | 0.4286 | 0.9545 | 0.4286 | 33.7393 |
 
-![Figure 2. Controlled Qwen 3B chain vs single-shot comparison with semantic FR](assets/rq2_qwen3b.png)
+![Figure 3. Controlled Qwen 3B chain vs single-shot comparison with semantic FR](assets/rq2_qwen3b.png)
 
 The Qwen 3B rerun changes the RQ2 interpretation again. Here both `chain` and `single-shot` remained structurally valid (`schema = 1.0000`, `usable output = 1.0000`), so the comparison becomes mostly about semantic quality and speed. Under semantic matching, `single-shot` captured more requirement meaning (`FR F1 = 0.4286`) than `chain` (`0.3636`) and ran much faster (`33.7s` vs `60.6s`). Relaxed hallucination was the same for both variants (`0.4286`), but `single-shot` triggered semantic warnings on every sample while the chained variant triggered none. This suggests that with the current best model, the chain no longer wins on headline quality, but it still provides a cleaner review signal and more explicit stage-wise control.
 
@@ -121,7 +148,9 @@ Table 4 reports the four first-pass Qwen 3B ablation variants.
 | NoSemanticVerify | 0.0909 | 1.0000 | 1.0000 | 0.1667 | 0.0000 | N/A | 60.5207 |
 | StrictRaw | 0.0952 | 0.8333 | 0.8333 | 0.0000 | 0.0000 | N/A | 52.9075 |
 
-![Figure 3. Controlled Qwen 3B robustness ablation](assets/rq4_qwen3b.png)
+![Figure 4. Controlled Qwen 3B robustness ablation](assets/rq4_qwen3b.png)
+
+![Figure 5. Controlled Qwen 3B experiments: chain comparison and robustness usability](assets/qwen_controlled_summary.png)
 
 The Qwen 3B ablation yields a narrower but still useful conclusion. `FullChain` reached `1.0000` schema validity and `1.0000` usable output. Removing retry reduced both to `0.8333`, and `StrictRaw` ended at the same level because the only clear failure on this small set was a stage-3 schema error that retry could recover. Disabling semantic verification did not change exact quality or usability, so on this dataset semantic verification behaved mainly as a review-time warning layer rather than a rescue mechanism. In other words, Qwen 3B did not need the full robustness stack to stay mostly operational, but retry still provided a measurable benefit.
 
