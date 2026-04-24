@@ -173,7 +173,7 @@ Semantic rescoring changes the headline interpretation. `Gemma 3` preserved the 
 Future work should expand the gold dataset, replace the current lexical-semantic rescoring with stronger semantic-similarity evaluation, improve Stage 2 and Stage 3 prompt/validator alignment, and repeat the final controlled experiments on additional models under the latest pipeline implementation. The prototype could also be extended toward speech-to-text input, live meeting capture, and near-real-time specification drafting. That extension would require streaming segmentation, incremental schema updates, conflict handling across turns, and UI support for human approval while the conversation is still in progress.
 
 ## References
-1. Lee, M.-h. *Conversation-to-Spec Prototype Repository*. GitHub. https://github.com/LeeMin-hyeong/NLP
+1. Lee, M.-h. *Conversation-to-Spec Prototype Repository*. GitHub. https://github.com/LeeMin-hyeong/conversation-to-spec
 2. Hugging Face. *Transformers Documentation*. https://huggingface.co/docs/transformers/index
 3. Google. *Gemma 3 1B IT model card*. https://huggingface.co/google/gemma-3-1b-it
 4. Qwen Team. *Qwen2.5-0.5B-Instruct model card*. https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct
