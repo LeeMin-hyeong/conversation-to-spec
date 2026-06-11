@@ -1,137 +1,114 @@
 # Conversation-to-Spec
 
-> Turn messy client-developer conversations into traceable software requirement drafts.
+`conversation-to-spec` converts informal client-developer conversations into
+traceable software requirement drafts. It is a Python NLP course project, not a
+web app.
 
-**Conversation-to-Spec** is a Python-only NLP prototype for converting informal English project conversations into structured software specification drafts. It is built for junior PMs, student team leads, and capstone teams who need to identify requirements, ambiguity, constraints, and follow-up questions before implementation starts.
+The current `v0.1.1` direction is a verifier-guided few-shot pipeline:
 
-This is **not a web app**. The project focuses on local Hugging Face model inference, prompt-chained LLM processing, schema validation, quantitative evaluation, model comparison, and experiment logging.
+```text
+Conversation
+-> source-unit preprocessing
+-> few-shot single-shot source-unit decision generation
+-> deterministic spec construction
+-> quality checks
+-> claim-evidence verification
+-> selective repair when enabled
+-> spec.json / spec.md / verification reports
+```
 
----
-
-## What It Produces
-
-Given a plain `.txt` conversation, the system generates:
-
-- `output/spec.json`: validated structured output
-- `output/spec.md`: readable requirements draft
-- `output/debug/<input-name>/`: raw model outputs, repaired outputs, stage errors, and run summary
-
-The final spec contains:
-
-| Section | Purpose |
-| --- | --- |
-| `project_summary` | Short project-level summary grounded in the conversation |
-| `functional_requirements` | Concrete user/system capabilities |
-| `non_functional_requirements` | Quality attributes such as usability, reliability, speed, accessibility, style, and security |
-| `constraints` | Explicit scope, deadline, platform, role, budget, or access limits |
-| `open_questions` | Unresolved ambiguity or missing decisions |
-| `follow_up_questions` | Developer-facing questions that should be asked next |
-| `notes` | Useful contextual information that is not a hard requirement |
-| `conversation_units` | Trace units `U1`, `U2`, ... used as evidence anchors |
-| `verification_warnings` | Semantic consistency warnings from post-generation checks |
-
-Every extracted item carries `source_units`, so a reviewer can trace each requirement back to the original conversation unit.
-
----
+This is a lightweight traceability layer. It does not implement full RAG,
+Graph-RAG, or a full reproduction of RAGAS/MiniCheck.
 
 ## Current Pipeline
 
-The default architecture is a **multi-stage LLM chain** rather than a single generic summary prompt.
-
 ```mermaid
 flowchart TD
-    A[Raw transcript] --> B[Segment into U1, U2, ...]
-    B --> C[Stage 1: Candidate extraction]
-    C --> D[Stage 2: Candidate classification]
-    D --> E[Stage 3: Requirement rewriting]
-    E --> F[Stage 4: Open question generation]
-    F --> G[Stage 5: Follow-up question generation]
-    G --> H[Stage 6: Project summary]
-    H --> I[Pydantic SpecOutput validation]
-    I --> J[Markdown + JSON output]
-    I --> K[Debug artifacts + metrics]
+    A["Raw transcript"] --> B["Segment into U1, U2, ..."]
+    B --> C["Few-shot single-call generator"]
+    C --> D["source_unit_decisions JSON"]
+    D --> E["Pydantic parsing and repair"]
+    E --> F["Deterministic requirement construction"]
+    F --> G["Evidence spans, acceptance criteria, quality checks"]
+    G --> H["Heuristic or MiniCheck-style verification"]
+    H --> I["Selective repair if enabled"]
+    I --> J["spec.json, spec.md, verification reports"]
 ```
 
-The chain is designed to make the model do the NLP-heavy work:
+The production pipeline is single-shot only. The earlier multi-stage chain mode
+and production `--mock` path were removed because they did not represent the
+real model behavior being evaluated. Tests use lightweight fake runners instead.
 
-1. **Segment** raw text into traceable conversation units.
-2. **Extract candidates** with high recall.
-3. **Classify candidates** into requirement categories.
-4. **Rewrite** raw utterances into specification-style wording.
-5. **Generate open questions** for unresolved ambiguity.
-6. **Generate follow-up questions** only where clarification is still needed.
-7. **Validate** the final result with Pydantic.
-8. **Evaluate** outputs quantitatively against a manually labeled dataset.
+## What The LLM Generates
 
-A `single_shot` mode also exists for controlled comparison against the chained architecture.
+The LLM does not generate the full final schema. The current prompt asks for:
 
----
+- a short `project_summary`
+- flat `source_unit_decisions`
+- one or more decision rows per relevant conversation unit
+- optional short source-backed `claim` text for an atomic decision
 
-## Requirements
+The prompt explicitly tells the model not to generate final requirements,
+evidence spans, acceptance criteria, quality checks, or verification fields.
+Those fields are filled by deterministic post-processing and the verifier.
 
-- Python `>=3.10`
-- macOS, Linux, or Windows
-- Hugging Face Transformers-compatible local inference environment
-- GPU strongly recommended for 1B+ models
+This design was chosen because small local models are more reliable when they
+classify and extract short source-grounded decisions than when they must produce
+a large nested specification schema in one pass.
 
-The project currently uses `uv` for reproducible dependency management.
+## What It Produces
 
-Main dependencies are declared in [pyproject.toml](pyproject.toml):
+Each run writes:
 
-- `transformers`
-- `torch`
-- `accelerate`
-- `pydantic`
-- `PyYAML`
-- `matplotlib`
+- `spec.json`: validated structured specification
+- `spec.md`: readable Markdown specification
+- `verification_report.json`: requirement-level verification results
+- `verification_report.md`: readable verification report
+- `debug/spec/`: raw model output, repaired JSON, warnings, and summary
 
-Windows CUDA builds use the configured PyTorch CUDA index in `pyproject.toml`.
+Each generated requirement or constraint includes:
 
----
+- `source_units`: referenced conversation unit IDs
+- `evidence_spans`: source-grounded evidence text
+- `acceptance_criteria`: Given/When/Then-style criteria when possible
+- `quality_checks`: atomicity, testability, actor clarity, traceability, ambiguity
+- `verification`: source relevance, verdict, confidence, and warnings
 
-## Setup
+## Default Model
 
-### Recommended: uv
+The default model is configured in [configs/models.yaml](configs/models.yaml):
+
+```yaml
+default_model: qwen3_0.6b
+
+models:
+  qwen3_0.6b:
+    hf_repo_id: Qwen/Qwen3-0.6B
+```
+
+The default generation settings use deterministic decoding and a larger token
+budget to reduce truncated JSON:
+
+```yaml
+generation:
+  max_new_tokens: 2048
+  temperature: 0.0
+  do_sample: false
+```
+
+Qwen reasoning output is handled defensively. The prompt requests JSON only and
+`/no_think`, and the parser strips `<think>...</think>` blocks before JSON
+parsing.
+
+## Quick Start
+
+Install dependencies:
 
 ```bash
 uv sync
 ```
 
-Run commands through the virtual environment:
-
-```bash
-uv run python -m app.main --help
-```
-
-### Alternative: pip
-
-```bash
-python3 -m venv .venv
-source .venv/bin/activate  # macOS/Linux
-pip install -r requirements.txt
-```
-
-On Windows PowerShell:
-
-```powershell
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
-```
-
----
-
-## Quick Start
-
-### Run with the default model
-
-The default model is configured in [configs/models.yaml](configs/models.yaml):
-
-```yaml
-default_model: qwen2_5_3b_instruct
-```
-
-Run a sample transcript:
+Run a sample with the default model:
 
 ```bash
 uv run python -m app.main \
@@ -139,142 +116,82 @@ uv run python -m app.main \
   --output output
 ```
 
-Equivalent without `uv`:
-
-```bash
-python3 -m app.main --input samples/sample_cafe_website.txt --output output
-```
-
-### Run with a specific model alias
-
-```bash
-uv run python -m app.main \
-  --input samples/sample_club_app.txt \
-  --output output \
-  --model qwen2_5_3b_instruct
-```
-
-### Run with a direct Hugging Face repo id
-
-```bash
-uv run python -m app.main \
-  --input samples/sample_restaurant.txt \
-  --output output \
-  --model Qwen/Qwen2.5-1.5B-Instruct
-```
-
-### Run deterministic mock mode
-
-Mock mode is useful for tests and CLI validation without downloading model weights.
+Run with explicit options:
 
 ```bash
 uv run python -m app.main \
   --input samples/sample_cafe_website.txt \
   --output output \
-  --mock
+  --model qwen3_0.6b \
+  --prompt-style few_shot \
+  --verify-mode heuristic \
+  --repair-on-fail
 ```
 
----
-
-## Model Configuration
-
-Model aliases live in [configs/models.yaml](configs/models.yaml).
-
-Current configured models include:
-
-| Alias | Hugging Face model |
-| --- | --- |
-| `qwen_0_5b` | `Qwen/Qwen2.5-0.5B-Instruct` |
-| `qwen_1_5b` | `Qwen/Qwen2.5-1.5B-Instruct` |
-| `qwen2_5_3b_instruct` | `Qwen/Qwen2.5-3B-Instruct` |
-| `tinyllama_1_1b` | `TinyLlama/TinyLlama-1.1B-Chat-v1.0` |
-| `gemma_3_1b_it` | `google/gemma-3-1b-it` |
-| `phi_3_5_mini_instruct` | `microsoft/Phi-3.5-mini-instruct` |
-| `mistral_7b_instruct` | `mistralai/Mistral-7B-Instruct-v0.3` |
-
-Shared generation settings are also configured in `configs/models.yaml`:
-
-```yaml
-generation:
-  max_new_tokens: 900
-  temperature: 0.0
-  top_p: 1.0
-  do_sample: false
-  max_retries: 2
-```
-
----
-
-## Pipeline Modes and Robustness Profiles
-
-### Pipeline modes
-
-| Mode | Description |
-| --- | --- |
-| `chain` | Multi-stage extraction, classification, rewriting, question generation, and summary generation |
-| `single_shot` | One prompt directly generates the full `SpecOutput` |
-
-Example:
+Use a direct Hugging Face repository ID:
 
 ```bash
 uv run python -m app.main \
   --input samples/sample_cafe_website.txt \
   --output output \
-  --model qwen2_5_3b_instruct \
-  --pipeline-mode single_shot
+  --model Qwen/Qwen3-0.6B
 ```
 
-### Robustness profiles
+Single-run outputs are written to timestamped directories:
 
-| Profile | Repair | Retry | Stage fallback | Semantic verification | Use case |
-| --- | --- | --- | --- | --- | --- |
-| `FullChain` | yes | yes | yes | yes | Default robust pipeline |
-| `NoRetry` | yes | no | yes | yes | Retry ablation |
-| `NoSemanticVerify` | yes | yes | yes | no | Verification ablation |
-| `StrictRaw` | no | no | no | no | Strict model-only failure analysis |
-
-Example strict run:
-
-```bash
-uv run python -m app.main \
-  --input samples/sample_club_app.txt \
-  --output output \
-  --model qwen2_5_3b_instruct \
-  --ablation-profile StrictRaw
+```text
+output/YYYYMMDD_HHMMSS__<model>__single_shot/
 ```
 
-If you want the model output to fail rather than be rescued by deterministic stage fallback, use `--ablation-profile StrictRaw`.
+## Verification Modes
 
----
+The CLI supports:
+
+| Mode | Meaning |
+| --- | --- |
+| `off` | Skip requirement verification. |
+| `heuristic` | Use deterministic claim-evidence checks. |
+| `llm` | Use heuristic checks plus selective LLM verification for weak cases. |
+| `minicheck` | Use the MiniCheck-style classifier backend when available. |
+
+`minicheck` is the CLI default, but course-report experiments may explicitly use
+`--verify-mode heuristic` for reproducibility and lower runtime. When reporting
+results, check each run's `run_config.json` before claiming which verifier was
+used.
+
+The verifier can label requirements as:
+
+- `SUPPORTED`
+- `PARTIALLY_SUPPORTED`
+- `UNSUPPORTED`
+- `CONTRADICTED`
+- `NOT_ENOUGH_INFO`
+- `NOT_CHECKED`
+
+The deterministic verifier checks:
+
+- referenced source units exist
+- evidence spans are present for traceable claims
+- acceptance criteria are non-empty
+- vague words such as `fast`, `easy`, `simple`, `secure`, and `reliable` are not
+  marked testable without measurable context
+- numeric thresholds are not introduced unless grounded in source evidence
+- future-scope or excluded items are not promoted into first-release requirements
 
 ## Evaluation
 
-The evaluation dataset is [dataset/eval_samples.json](dataset/eval_samples.json). It contains manually labeled gold items for:
-
-- functional requirements
-- non-functional requirements
-- constraints
-- open questions
-- follow-up questions
-- notes
-- evidence/source-unit links
-
-### Evaluate one model
+Evaluate one model:
 
 ```bash
 uv run python -m app.main \
   --evaluate \
   --dataset dataset/eval_samples.json \
-  --model qwen2_5_3b_instruct
+  --model qwen3_0.6b \
+  --verify-mode heuristic \
+  --repair-on-fail
 ```
 
-Outputs are written under:
-
-```text
-eval_output/<model>__<pipeline-mode>/
-```
-
-### Compare configured models
+Compare configured models:
 
 ```bash
 uv run python -m app.main \
@@ -283,74 +200,37 @@ uv run python -m app.main \
   --all-models
 ```
 
-Comparison outputs:
+`--all-models` reads `compare_models` from `configs/models.yaml`. Make sure each
+entry in `compare_models` has a matching alias under `models` before running a
+large comparison.
 
-- `eval_output/comparison_results.json`
-- `eval_output/comparison_table.md`
-- per-model `metrics.json`
-- per-sample prediction/debug files
-
-### Timestamped experiment run
-
-```bash
-uv run python -m app.main \
-  --evaluate \
-  --dataset dataset/eval_samples.json \
-  --model qwen2_5_3b_instruct \
-  --experiment
-```
-
-Artifacts are stored under:
+Evaluation outputs are written under:
 
 ```text
-experiments/runs/<timestamp>/
+eval_output/YYYYMMDD_HHMMSS/<model>__single_shot/
 ```
-
-### Predefined experiment suites
-
-RQ2 compares chain vs single-shot:
-
-```bash
-uv run python -m app.main \
-  --experiment-suite rq2 \
-  --dataset dataset/eval_samples.json \
-  --model qwen2_5_3b_instruct \
-  --experiment
-```
-
-RQ4 runs robustness ablations:
-
-```bash
-uv run python -m app.main \
-  --experiment-suite rq4 \
-  --dataset dataset/eval_samples.json \
-  --model qwen2_5_3b_instruct \
-  --experiment
-```
-
----
 
 ## Metrics
 
-The evaluator reports both extraction quality and operational reliability.
+The evaluator reports both extraction and verification metrics:
 
 | Metric | Meaning |
 | --- | --- |
-| Functional / non-functional / constraint F1 | Exact or normalized match against gold items |
-| Requirement type macro-F1 | Whether extracted items were placed in the correct category |
-| Open question recall | How many gold ambiguity/open-question items were captured |
-| Follow-up question coverage | Whether unresolved issues triggered useful follow-up questions |
-| Hallucination rate | Predicted items not supported by any gold item |
-| Schema validity rate | JSON parse + Pydantic validation success |
-| Usable output rate | Whether the pipeline produced a final usable spec |
-| Retry recovery rate | Fraction of samples recovered by retry |
-| Fallback rescue rate | Fraction of samples rescued by deterministic stage fallback |
-| Semantic warning rate | Fraction of outputs flagged by semantic verification |
-| Average latency | Mean runtime per sample |
-
-Important limitation: exact-match F1 is intentionally strict and may under-score semantically correct paraphrases. The final report therefore also discusses artifact-level semantic rescoring.
-
----
+| Functional / non-functional / constraint F1 | Exact-match requirement extraction score. |
+| Semantic functional / non-functional / constraint F1 | Lightweight token-overlap semantic match. |
+| Semantic requirement macro-F1 | Macro average of semantic FR/NFR/constraint F1. |
+| Hallucination rate | Predicted requirements not matched to gold items. |
+| Acceptance criteria coverage | Fraction of requirements with criteria. |
+| Evidence span coverage | Fraction with evidence spans. |
+| Traceability coverage | Fraction with valid source units and evidence. |
+| Quality gate pass rate | Fraction passing atomic/testable/actor/evidence checks. |
+| High ambiguity rate | Fraction marked high ambiguity. |
+| Source relevance average | Average source-claim relevance score. |
+| Groundedness rate | Fraction marked `SUPPORTED` or `PARTIALLY_SUPPORTED`. |
+| Unsupported requirement rate | Fraction marked unsupported, contradicted, or not enough info. |
+| Verification pass rate | Fraction marked `SUPPORTED`. |
+| Schema validity rate | JSON parse and Pydantic validation success. |
+| Latency / LLM calls | Average runtime and model-call count. |
 
 ## Project Structure
 
@@ -358,30 +238,24 @@ Important limitation: exact-match F1 is intentionally strict and may under-score
 conversation-to-spec/
 ├── app/
 │   ├── main.py              # CLI entry point
-│   ├── segmenter.py         # transcript segmentation into U1, U2, ...
-│   ├── schemas.py           # Pydantic output and stage schemas
-│   ├── prompt_builder.py    # prompt construction for each LLM stage
-│   ├── model_runner.py      # HF and mock model runners
-│   ├── extractor.py         # JSON extraction, repair, validation, semantic checks
-│   ├── pipeline.py          # chain/single-shot orchestration
-│   ├── formatter.py         # Markdown output formatting
-│   ├── evaluation.py        # metrics and model comparison
+│   ├── segmenter.py         # transcript segmentation
+│   ├── schemas.py           # Pydantic schemas
+│   ├── prompt_builder.py    # few-shot single-shot prompt
+│   ├── model_runner.py      # local Hugging Face runner
+│   ├── extractor.py         # JSON parsing, repair, spec construction
+│   ├── quality.py           # acceptance criteria and quality checks
+│   ├── verifier.py          # heuristic/MiniCheck-style verification and repair
+│   ├── pipeline.py          # orchestration
+│   ├── formatter.py         # Markdown formatting
+│   ├── evaluation.py        # metrics and comparison tables
 │   └── progress.py          # CLI progress logging
 ├── configs/
-│   ├── models.yaml          # model aliases and generation settings
-│   └── prompts.yaml         # stage prompt instructions
-├── samples/                 # example input conversations
-├── dataset/                 # manually labeled evaluation set
-├── output/                  # single-run outputs
-├── eval_output/             # evaluation outputs
-├── assets/                  # report figures
-├── tests/                   # pytest test suite
-├── report.md                # final technical report draft
-├── pyproject.toml           # uv project/dependency config
-└── README.md
+├── dataset/
+├── samples/
+├── output/
+├── eval_output/
+└── tests/
 ```
-
----
 
 ## Testing
 
@@ -389,43 +263,17 @@ conversation-to-spec/
 uv run pytest
 ```
 
-Covered areas include:
+If `uv` cannot access its cache directory on Windows, fix the local cache
+permissions and rerun the command before reporting a fresh test count.
 
-- segmentation behavior
-- JSON extraction and repair behavior
-- model runner behavior
-- chain pipeline execution
-- Markdown formatting
-- evaluation metrics
-- progress logging
+## Limitations
 
----
-
-## Notes on Local Model Use
-
-Local Hugging Face inference downloads model weights into the Hugging Face cache. A model is not downloaded every run unless the cache is removed or a different model is requested.
-
-Large models can fail or run slowly depending on hardware. In this project, the practical local tradeoff was:
-
-- smaller models are faster but often fail structured generation,
-- larger models produce better drafts but require more VRAM and time,
-- Qwen 2.5 3B was the strongest operational baseline in the final experiments,
-- Gemma 3 1B sometimes produced richer semantic drafts but was less consistently reliable.
-
----
-
-## Current Limitations
-
-- The current dataset is small, so metrics are useful for prototype comparison but not broad generalization.
-- Exact string matching is too strict for requirement paraphrases.
-- Unlabeled conversation segmentation is lightweight and not full discourse segmentation.
-- Local model behavior is sensitive to VRAM, tokenizer limits, and decoding settings.
-- Some robustness profiles intentionally use deterministic rescue logic; use `StrictRaw` when measuring pure model-only behavior.
-- No fine-tuning is included yet.
-- No frontend, database, authentication, or API server is included by design.
-
----
-
-## Report
-
-The technical report draft is maintained in [report.md](report.md). It records the project motivation, methods, experiment setup, results, discussion, limitations, and implementation history.
+- Small local models can still misclassify source units or copy few-shot example
+  wording if the prompt is too domain-specific.
+- The current semantic evaluator is deterministic and lightweight; it is not a
+  learned semantic similarity model.
+- The verifier improves traceability but does not replace human requirements
+  review.
+- Full RAGAS, Graph-RAG, and full MiniCheck reproduction are out of scope.
+- The available evaluation datasets are small, so reported results should be
+  treated as course-project evidence rather than broad generalization.
