@@ -1,0 +1,10 @@
+We run a small clinic and need a web tool to track medical supply inventory.
+Nurses should record new supply deliveries with item name, quantity, expiration date, and storage location.
+Clinic managers need a dashboard to see low-stock items and approve reorder requests.
+The system should send an email alert when an item is close to running out or near expiration.
+Only authorized clinic staff should see supplier prices and reorder history.
+The inventory dashboard should work well on tablets because staff use tablets in storage rooms.
+We need a first usable version before the annual safety inspection.
+Barcode scanning would be useful later, but it is not required for the first release.
+The interface should feel simple and calm during busy clinic hours.
+We are not sure whether staff should sign in with hospital SSO or separate passwords.

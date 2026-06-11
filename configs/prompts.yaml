@@ -1,65 +1,13 @@
-extraction_instructions: |
-  You are a requirements analyst.
-  Convert an unlabeled English conversation into a structured software requirements draft.
+single_shot_instructions: |
+  Classify each source unit in an unlabeled English client-developer
+  conversation using one LLM call. The code will convert these decisions into a
+  traceable software specification draft.
 
-  Rules:
-  - The conversation may not contain speaker labels.
-  - Do not assume identity from fixed prefixes like "Client:" or "Developer:".
-  - Use semantic meaning from the full conversation, not sentence-by-sentence copying.
-  - Rewrite statements into requirement-style English whenever possible.
-  - Do not invent unsupported requirements.
-  - If evidence is weak, move the item into open_questions or notes instead of hard requirements.
-  - Every extracted item must include valid source_units (U1, U2, ...).
-  - Distinguish explicit solution boundaries as constraints (scope exclusions, deadlines, budget/platform/access limits).
-  - Ambiguous, future-scope, or underspecified points should become open_questions or notes.
-  - Follow-up questions must be practical questions a developer should ask next.
-  - Return strict JSON only.
-  - Do not output markdown fences or extra commentary.
+  The output should include:
+  - a short project summary
+  - one or more flat source_unit_decision rows per relevant conversation unit
+  - repeated source_unit values when one source unit contains multiple atomic decisions
 
-stage_prompts:
-  stage_1_candidate_extraction: |
-    Extract candidate items from the conversation with high recall.
-    At this stage, do not finalize requirement categories and do not over-polish wording.
-    Candidate kinds are:
-    - possible_requirement
-    - possible_quality_expectation
-    - possible_constraint
-    - possible_ambiguity
-    - possible_future_scope
-    - possible_followup_trigger
-    Prefer possible_quality_expectation for quality/experience statements such as:
-    - mobile performance, responsiveness, load speed
-    - usability, accessibility, reliability, security
-    - style/aesthetic expectations (clean, modern, intuitive)
-    Only use possible_requirement when the statement is a concrete system/user capability.
-
-  stage_2_candidate_classification: |
-    Classify each candidate into exactly one final_type:
-    - functional_requirement
-    - non_functional_requirement
-    - constraint
-    - open_question
-    - follow_up_trigger
-    - note
-    - discard
-    Distinguish current scope from future/optional scope and avoid overcommitting vague statements.
-    Use constraint for explicit boundaries (timeline, budget, scope exclusion, platform-only, access limits).
-    Performance/usability/style/mobile/accessibility/security/reliability expectations are usually non_functional_requirement.
-    If quality/style/usability wording is vague (for example "clean and modern"), prefer open_question over functional_requirement.
-    Reserve functional_requirement for concrete user/system capabilities (for example reserve, create, update, manage, view).
-
-  stage_3_requirement_rewriting: |
-    Rewrite functional, non-functional, and constraint items into clear requirement-style English.
-    Preserve meaning and traceability, and avoid unsupported implementation details.
-
-  stage_4_open_question_generation: |
-    Generate unresolved open questions from real ambiguities, unclear boundaries, and missing requirement details.
-    Keep questions specific and traceable to source units.
-
-  stage_5_followup_generation: |
-    Generate practical developer-facing follow-up questions that help turn open points into implementation-ready decisions.
-    Avoid generic filler questions and tie each question to source units.
-
-  stage_6_project_summary: |
-    Produce a concise 2-4 sentence project summary based on rewritten requirements, open questions, and notes.
-    Do not invent unsupported scope.
+  Do not generate final requirements, evidence spans, acceptance criteria,
+  quality checks, or verification fields. Use the provided conversation_units as
+  the only evidence base.

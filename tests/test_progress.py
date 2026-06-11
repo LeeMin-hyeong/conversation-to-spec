@@ -3,17 +3,18 @@ import time
 from pathlib import Path
 
 from app.evaluation import evaluate_model
-from app.model_runner import MockModelRunner
 from app.pipeline import ConversationToSpecPipeline
 from app.progress import ConsoleProgressReporter, pipeline_step_index, pipeline_total_steps
 from app.prompt_builder import load_prompt_config
+from tests.fakes import FakeSingleShotRunner
 
 
 def _build_pipeline() -> ConversationToSpecPipeline:
     return ConversationToSpecPipeline(
-        runner=MockModelRunner(),
+        runner=FakeSingleShotRunner(),
         prompt_config=load_prompt_config(),
         generation_config={"max_retries": 1},
+        verify_mode="heuristic",
     )
 
 
@@ -26,16 +27,16 @@ def test_console_progress_reporter_updates_elapsed_time_inline():
         heartbeat_delay_sec=0.0,
     )
     total_steps = pipeline_total_steps()
-    step_index = pipeline_step_index("stage_1_candidate_extraction")
+    step_index = pipeline_step_index("single_shot_spec_generation")
 
     reporter.pipeline_started(total_steps=total_steps, run_label="demo")
     reporter.stage_started(
-        stage_key="stage_1_candidate_extraction",
+        stage_key="single_shot_spec_generation",
         step_index=step_index,
         total_steps=total_steps,
     )
     handle = reporter.stage_attempt_started(
-        stage_key="stage_1_candidate_extraction",
+        stage_key="single_shot_spec_generation",
         step_index=step_index,
         total_steps=total_steps,
         attempt_index=1,
@@ -47,8 +48,8 @@ def test_console_progress_reporter_updates_elapsed_time_inline():
 
     output = stream.getvalue()
     assert "\r" in output
-    assert "Extract candidates running" in output
-    assert "Extract candidates completed" in output
+    assert "Generate spec running" in output
+    assert "Generate spec completed" in output
 
 
 def test_pipeline_reports_stage_progress_messages():
@@ -65,8 +66,7 @@ def test_pipeline_reports_stage_progress_messages():
     assert run.success is True
     assert "Pipeline started" in output
     assert "Segment conversation completed" in output
-    assert "Extract candidates" in output
-    assert "Assemble final spec completed" in output
+    assert "Generate spec completed" in output
 
 
 def test_evaluate_model_reports_sample_progress(tmp_path: Path):
@@ -89,7 +89,7 @@ def test_evaluate_model_reports_sample_progress(tmp_path: Path):
     pipeline = _build_pipeline()
 
     report = evaluate_model(
-        model_label="mock",
+        model_label="fake",
         pipeline=pipeline,
         samples=samples,
         output_dir=tmp_path,
@@ -98,6 +98,6 @@ def test_evaluate_model_reports_sample_progress(tmp_path: Path):
 
     output = stream.getvalue()
     assert "metrics" in report
-    assert "Evaluating mock on 1 samples." in output
+    assert "Evaluating fake on 1 samples." in output
     assert "Sample 1/1 [mini] started" in output
     assert "Sample 1/1 [mini] finished" in output

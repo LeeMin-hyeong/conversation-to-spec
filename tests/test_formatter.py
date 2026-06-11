@@ -1,12 +1,33 @@
 from app.formatter import format_spec_markdown
-from app.schemas import ConstraintItem, ConversationUnit, NoteItem, QuestionItem, RequirementItem, SpecOutput
+from app.schemas import (
+    ConstraintItem,
+    ConversationUnit,
+    NoteItem,
+    QuestionItem,
+    RequirementItem,
+    RequirementQualityChecks,
+    SpecOutput,
+)
 
 
 def test_markdown_contains_required_sections():
     spec = SpecOutput(
         project_summary="Project summary text.",
         functional_requirements=[
-            RequirementItem(id="FR1", text="The system shall do X.", source_units=["U1"])
+            RequirementItem(
+                id="FR1",
+                text="The system shall do X.",
+                source_units=["U1"],
+                evidence_spans=["Need X."],
+                acceptance_criteria=["Given X, When Y, Then Z."],
+                quality_checks=RequirementQualityChecks(
+                    is_atomic=True,
+                    is_testable=True,
+                    has_clear_actor=True,
+                    has_traceable_evidence=True,
+                    ambiguity_risk="low",
+                ),
+            )
         ],
         non_functional_requirements=[
             RequirementItem(id="NFR1", text="The system should do Y.", source_units=["U2"])
@@ -29,4 +50,7 @@ def test_markdown_contains_required_sections():
     assert "## Open Questions" in md
     assert "## Follow-up Questions" in md
     assert "## Notes" in md
+    assert "Evidence: Need X." in md
+    assert "Acceptance criteria:" in md
+    assert "ambiguity=low" in md
     assert "Future scope item." in md

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import List
+from typing import List, Literal
 
 from pydantic import BaseModel, Field
 
@@ -10,16 +10,66 @@ class ConversationUnit(BaseModel):
     text: str
 
 
+class RequirementQualityChecks(BaseModel):
+    is_atomic: bool = False
+    is_testable: bool = False
+    has_clear_actor: bool = False
+    has_traceable_evidence: bool = False
+    ambiguity_risk: Literal["low", "medium", "high"] = "medium"
+
+
+class RequirementVerification(BaseModel):
+    source_relevance_score: float | None = None
+    verdict: Literal[
+        "SUPPORTED",
+        "PARTIALLY_SUPPORTED",
+        "UNSUPPORTED",
+        "CONTRADICTED",
+        "NOT_ENOUGH_INFO",
+        "NOT_CHECKED",
+    ] = "NOT_CHECKED"
+    confidence: float | None = None
+    warnings: List[str] = Field(default_factory=list)
+
+
+class AtomicSourceDecision(BaseModel):
+    decision: Literal[
+        "functional_requirement",
+        "non_functional_requirement",
+        "constraint",
+        "open_question",
+        "note",
+        "discard",
+    ]
+    claim: str = ""
+    open_question: str = ""
+    follow_up_question: str = ""
+    note: str = ""
+
+
+class SourceUnitDecision(BaseModel):
+    source_unit: str
+    atomic_decisions: List[AtomicSourceDecision] = Field(default_factory=list)
+
+
 class RequirementItem(BaseModel):
     id: str
     text: str
     source_units: List[str] = Field(default_factory=list)
+    evidence_spans: List[str] = Field(default_factory=list)
+    acceptance_criteria: List[str] = Field(default_factory=list)
+    quality_checks: RequirementQualityChecks = Field(default_factory=RequirementQualityChecks)
+    verification: RequirementVerification = Field(default_factory=RequirementVerification)
 
 
 class ConstraintItem(BaseModel):
     id: str
     text: str
     source_units: List[str] = Field(default_factory=list)
+    evidence_spans: List[str] = Field(default_factory=list)
+    acceptance_criteria: List[str] = Field(default_factory=list)
+    quality_checks: RequirementQualityChecks = Field(default_factory=RequirementQualityChecks)
+    verification: RequirementVerification = Field(default_factory=RequirementVerification)
 
 
 class QuestionItem(BaseModel):
@@ -75,6 +125,16 @@ class RewrittenItem(BaseModel):
 
 class Stage3RewrittenOutput(BaseModel):
     rewritten_items: List[RewrittenItem] = Field(default_factory=list)
+
+
+class EnrichedRequirementItem(RewrittenItem):
+    evidence_spans: List[str] = Field(default_factory=list)
+    acceptance_criteria: List[str] = Field(default_factory=list)
+    quality_checks: RequirementQualityChecks = Field(default_factory=RequirementQualityChecks)
+
+
+class RequirementQualityEnrichmentOutput(BaseModel):
+    enriched_items: List[EnrichedRequirementItem] = Field(default_factory=list)
 
 
 class Stage4OpenQuestionsOutput(BaseModel):

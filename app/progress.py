@@ -13,13 +13,7 @@ STAGE_FINAL = "final_assembly"
 
 PIPELINE_PROGRESS_SEQUENCE = (
     STAGE_0,
-    "stage_1_candidate_extraction",
-    "stage_2_candidate_classification",
-    "stage_3_requirement_rewriting",
-    "stage_4_open_question_generation",
-    "stage_5_followup_generation",
-    "stage_6_project_summary",
-    STAGE_FINAL,
+    "single_shot_spec_generation",
 )
 
 PIPELINE_STAGE_LABELS = {
@@ -27,9 +21,11 @@ PIPELINE_STAGE_LABELS = {
     "stage_1_candidate_extraction": "Extract candidates",
     "stage_2_candidate_classification": "Classify candidates",
     "stage_3_requirement_rewriting": "Rewrite requirements",
+    "requirement_quality_enrichment": "Enrich requirement quality",
     "stage_4_open_question_generation": "Generate open questions",
     "stage_5_followup_generation": "Generate follow-up questions",
     "stage_6_project_summary": "Summarize project",
+    "single_shot_spec_generation": "Generate spec",
     STAGE_FINAL: "Assemble final spec",
 }
 

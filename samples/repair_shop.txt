@@ -1,0 +1,10 @@
+We run a neighborhood repair shop and want a web app to manage service requests.
+Customers should submit repair requests with item category, issue description, preferred drop-off time, and photos if possible.
+Staff need a dashboard to assign technicians, update repair status, and record estimated costs.
+Customers should get email or SMS updates when the repair status changes.
+The system must not show one customer's address or phone number to other customers.
+Most staff use tablets in the shop, so the dashboard should work well on tablet screens.
+We need the first version ready before the autumn fair.
+Online payment would be nice later, but it is not needed for launch.
+The owner says the interface should feel calm and professional.
+We are not sure whether customers should create accounts or use one-time links.

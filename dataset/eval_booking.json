@@ -1,0 +1,235 @@
+[
+  {
+    "id": "yoga_studio_memberships",
+    "conversation_text": "Our yoga studio needs a membership and class booking system.\nMembers should book classes and cancel bookings before the cutoff time.\nInstructors should see class rosters and waitlists.\nStaff need to manage membership plans and pause requests.\nThe checkout should feel secure.\nThe design should be calm and clean.\nGift cards can be added after launch.",
+    "gold": {
+      "project_summary": "The project is a yoga studio membership and class booking system with member booking, instructor rosters, staff membership management, secure checkout, and future gift cards.",
+      "functional_requirements": [
+        {"text": "The system shall allow members to book classes and cancel bookings before the cutoff time.", "source_units": ["U2"]},
+        {"text": "The system shall allow instructors to view class rosters and waitlists.", "source_units": ["U3"]},
+        {"text": "The system shall allow staff to manage membership plans and pause requests.", "source_units": ["U4"]}
+      ],
+      "non_functional_requirements": [
+        {"text": "The checkout should feel secure.", "source_units": ["U5"]}
+      ],
+      "constraints": [
+        {"text": "Gift cards shall be excluded from the launch release.", "source_units": ["U7"]}
+      ],
+      "open_questions": [
+        {"text": "What cancellation cutoff time should be enforced?", "source_units": ["U2"]},
+        {"text": "What visual references define calm and clean design?", "source_units": ["U6"]}
+      ],
+      "follow_up_questions": [
+        {"text": "Which payment provider should be used for membership checkout?", "source_units": ["U5"]},
+        {"text": "What membership pause rules should staff be able to apply?", "source_units": ["U4"]}
+      ],
+      "notes": [
+        {"text": "Gift cards are future scope.", "source_units": ["U7"]}
+      ]
+    }
+  },
+  {
+    "id": "mobile_pet_grooming",
+    "conversation_text": "We operate a mobile pet grooming service and need an appointment app.\nPet owners should choose a service package and request a time window.\nGroomers should confirm appointments and update arrival status.\nCustomers should get reminder texts the day before.\nThe app should be friendly and easy for older customers.\nRecurring appointments are not required at launch.\nIn-app tipping can be considered later.",
+    "gold": {
+      "project_summary": "The project is a mobile pet grooming appointment app with customer service selection, groomer confirmations, arrival updates, reminder texts, and deferred recurring appointments and tipping.",
+      "functional_requirements": [
+        {"text": "The system shall allow pet owners to choose a grooming package and request a time window.", "source_units": ["U2"]},
+        {"text": "The system shall allow groomers to confirm appointments and update arrival status.", "source_units": ["U3"]},
+        {"text": "The system shall send reminder texts to customers the day before appointments.", "source_units": ["U4"]}
+      ],
+      "non_functional_requirements": [
+        {"text": "The app should be friendly and easy for older customers.", "source_units": ["U5"]}
+      ],
+      "constraints": [
+        {"text": "Recurring appointments shall not be required at launch.", "source_units": ["U6"]},
+        {"text": "In-app tipping shall be deferred to a later release.", "source_units": ["U7"]}
+      ],
+      "open_questions": [
+        {"text": "What usability criteria define friendly and easy for older customers?", "source_units": ["U5"]},
+        {"text": "Which service packages and time windows must be supported?", "source_units": ["U2"]}
+      ],
+      "follow_up_questions": [
+        {"text": "Which SMS provider should send reminder texts?", "source_units": ["U4"]},
+        {"text": "Should groomers be able to propose a different time window?", "source_units": ["U3"]}
+      ],
+      "notes": [
+        {"text": "In-app tipping can be considered later.", "source_units": ["U7"]}
+      ]
+    }
+  },
+  {
+    "id": "coworking_room_booking",
+    "conversation_text": "Our coworking space needs a room booking tool.\nMembers should reserve meeting rooms by date, time, and capacity.\nStaff should block rooms for private events or maintenance.\nThe system should send calendar invites after booking.\nThe booking page must load fast during Monday mornings.\nThe pricing rules for non-members are undecided.\nDoor access integration is future scope.",
+    "gold": {
+      "project_summary": "The project is a coworking room booking tool with member reservations, staff room blocks, calendar invites, peak-time performance, undecided non-member pricing, and future door access integration.",
+      "functional_requirements": [
+        {"text": "The system shall allow members to reserve meeting rooms by date, time, and capacity.", "source_units": ["U2"]},
+        {"text": "The system shall allow staff to block rooms for private events or maintenance.", "source_units": ["U3"]},
+        {"text": "The system shall send calendar invites after booking.", "source_units": ["U4"]}
+      ],
+      "non_functional_requirements": [
+        {"text": "The booking page must load fast during Monday mornings.", "source_units": ["U5"]}
+      ],
+      "constraints": [
+        {"text": "Door access integration shall be deferred to future scope.", "source_units": ["U7"]}
+      ],
+      "open_questions": [
+        {"text": "What pricing rules should apply to non-members?", "source_units": ["U6"]},
+        {"text": "What page-load target is required during Monday mornings?", "source_units": ["U5"]}
+      ],
+      "follow_up_questions": [
+        {"text": "Which calendar systems should receive booking invites?", "source_units": ["U4"]},
+        {"text": "What room capacity data must be maintained by staff?", "source_units": ["U2"]}
+      ],
+      "notes": [
+        {"text": "Door access integration is future scope.", "source_units": ["U7"]}
+      ]
+    }
+  },
+  {
+    "id": "photography_studio_booking",
+    "conversation_text": "A photography studio needs an online session booking site.\nClients should choose a package, date, and preferred photographer.\nStaff should approve bookings and request deposits.\nClients should receive preparation instructions by email.\nThe site should look professional on mobile.\nRescheduling rules are still not final.\nFull gallery delivery is outside this project.",
+    "gold": {
+      "project_summary": "The project is a photography session booking site with package selection, staff approval, deposit requests, preparation emails, mobile professionalism, and excluded gallery delivery.",
+      "functional_requirements": [
+        {"text": "The system shall allow clients to choose a package, date, and preferred photographer.", "source_units": ["U2"]},
+        {"text": "The system shall allow staff to approve bookings and request deposits.", "source_units": ["U3"]},
+        {"text": "The system shall email preparation instructions to clients.", "source_units": ["U4"]}
+      ],
+      "non_functional_requirements": [
+        {"text": "The site should look professional on mobile.", "source_units": ["U5"]}
+      ],
+      "constraints": [
+        {"text": "Full gallery delivery shall be outside this project.", "source_units": ["U7"]}
+      ],
+      "open_questions": [
+        {"text": "What rescheduling rules should be applied?", "source_units": ["U6"]},
+        {"text": "What visual criteria define professional on mobile?", "source_units": ["U5"]}
+      ],
+      "follow_up_questions": [
+        {"text": "Which deposit payment methods should be supported?", "source_units": ["U3"]},
+        {"text": "What preparation instructions vary by package?", "source_units": ["U4"]}
+      ],
+      "notes": [
+        {"text": "Full gallery delivery is out of scope.", "source_units": ["U7"]}
+      ]
+    }
+  },
+  {
+    "id": "bike_repair_queue",
+    "conversation_text": "Our bike shop needs a repair queue system.\nCustomers should submit repair requests with bike type and issue description.\nMechanics should estimate cost and update repair status.\nCustomers should receive texts when bikes are ready.\nThe system should be usable at the front counter on a tablet.\nWarranty rules are unclear.\nOnline parts ordering can wait.",
+    "gold": {
+      "project_summary": "The project is a bike repair queue system with customer repair requests, mechanic estimates and status updates, readiness texts, tablet counter use, unclear warranty rules, and deferred parts ordering.",
+      "functional_requirements": [
+        {"text": "The system shall allow customers to submit repair requests with bike type and issue description.", "source_units": ["U2"]},
+        {"text": "The system shall allow mechanics to estimate cost and update repair status.", "source_units": ["U3"]},
+        {"text": "The system shall text customers when bikes are ready.", "source_units": ["U4"]}
+      ],
+      "non_functional_requirements": [
+        {"text": "The system should be usable at the front counter on a tablet.", "source_units": ["U5"]}
+      ],
+      "constraints": [
+        {"text": "Online parts ordering shall be deferred.", "source_units": ["U7"]}
+      ],
+      "open_questions": [
+        {"text": "What warranty rules should be applied to repair requests?", "source_units": ["U6"]},
+        {"text": "Which tablet size and browser must be supported at the front counter?", "source_units": ["U5"]}
+      ],
+      "follow_up_questions": [
+        {"text": "What repair status values should mechanics use?", "source_units": ["U3"]},
+        {"text": "Which SMS provider should send bike-ready texts?", "source_units": ["U4"]}
+      ],
+      "notes": [
+        {"text": "Online parts ordering can wait.", "source_units": ["U7"]}
+      ]
+    }
+  },
+  {
+    "id": "cleaning_service_quotes",
+    "conversation_text": "A cleaning company wants a quote request website.\nCustomers should select property type, room count, and preferred dates.\nOffice staff should review requests and send quotes.\nCustomers should approve quotes online.\nThe form should be simple and fast on phones.\nRecurring subscription cleaning is not decided.\nCrew scheduling integration is future work.",
+    "gold": {
+      "project_summary": "The project is a cleaning service quote website with customer quote requests, staff quote review, online quote approval, mobile form usability, undecided recurring subscriptions, and future crew scheduling integration.",
+      "functional_requirements": [
+        {"text": "The system shall allow customers to request quotes with property type, room count, and preferred dates.", "source_units": ["U2"]},
+        {"text": "The system shall allow office staff to review requests and send quotes.", "source_units": ["U3"]},
+        {"text": "The system shall allow customers to approve quotes online.", "source_units": ["U4"]}
+      ],
+      "non_functional_requirements": [
+        {"text": "The form should be simple and fast on phones.", "source_units": ["U5"]}
+      ],
+      "constraints": [
+        {"text": "Crew scheduling integration shall be future work.", "source_units": ["U7"]}
+      ],
+      "open_questions": [
+        {"text": "Should recurring subscription cleaning be included?", "source_units": ["U6"]},
+        {"text": "What completion-time target defines fast on phones?", "source_units": ["U5"]}
+      ],
+      "follow_up_questions": [
+        {"text": "What quote fields are required for each property type?", "source_units": ["U2"]},
+        {"text": "Should quote approval require an electronic signature?", "source_units": ["U4"]}
+      ],
+      "notes": [
+        {"text": "Crew scheduling integration is future work.", "source_units": ["U7"]}
+      ]
+    }
+  },
+  {
+    "id": "independent_cinema_tickets",
+    "conversation_text": "An independent cinema needs an online ticket system.\nCustomers should buy tickets for showtimes and choose seats.\nStaff should create screenings and set seat maps.\nThe system should email tickets with QR codes.\nCheckout must handle high traffic on Friday evenings.\nConcession preorders are not in scope yet.\nThe site should feel stylish but not complicated.",
+    "gold": {
+      "project_summary": "The project is an online cinema ticket system with customer ticket purchase, seat choice, staff screening setup, QR-code email tickets, high-traffic checkout, and deferred concession preorders.",
+      "functional_requirements": [
+        {"text": "The system shall allow customers to buy tickets for showtimes and choose seats.", "source_units": ["U2"]},
+        {"text": "The system shall allow staff to create screenings and set seat maps.", "source_units": ["U3"]},
+        {"text": "The system shall email tickets with QR codes.", "source_units": ["U4"]}
+      ],
+      "non_functional_requirements": [
+        {"text": "Checkout must handle high traffic on Friday evenings.", "source_units": ["U5"]}
+      ],
+      "constraints": [
+        {"text": "Concession preorders shall not be included yet.", "source_units": ["U6"]}
+      ],
+      "open_questions": [
+        {"text": "What traffic level should checkout handle on Friday evenings?", "source_units": ["U5"]},
+        {"text": "What visual criteria define stylish but not complicated?", "source_units": ["U7"]}
+      ],
+      "follow_up_questions": [
+        {"text": "Which payment provider should process ticket purchases?", "source_units": ["U2"]},
+        {"text": "How should reserved seats be locked during checkout?", "source_units": ["U2"]}
+      ],
+      "notes": [
+        {"text": "Concession preorders are not in scope yet.", "source_units": ["U6"]}
+      ]
+    }
+  },
+  {
+    "id": "farmers_market_vendor",
+    "conversation_text": "The farmers market needs a vendor application portal.\nVendors should submit applications with product categories and booth needs.\nMarket managers should review applications and assign booth spaces.\nVendors should receive approval or rejection emails.\nThe portal should be easy for small farm owners.\nInsurance document requirements are still being discussed.\nOnline rent payment can be added later.",
+    "gold": {
+      "project_summary": "The project is a vendor application portal for a farmers market with vendor applications, manager review, booth assignment, email decisions, usability needs, unresolved insurance requirements, and future rent payment.",
+      "functional_requirements": [
+        {"text": "The system shall allow vendors to submit applications with product categories and booth needs.", "source_units": ["U2"]},
+        {"text": "The system shall allow market managers to review applications and assign booth spaces.", "source_units": ["U3"]},
+        {"text": "The system shall email vendors approval or rejection decisions.", "source_units": ["U4"]}
+      ],
+      "non_functional_requirements": [
+        {"text": "The portal should be easy for small farm owners.", "source_units": ["U5"]}
+      ],
+      "constraints": [
+        {"text": "Online rent payment shall be deferred to a later release.", "source_units": ["U7"]}
+      ],
+      "open_questions": [
+        {"text": "What insurance document requirements should vendors satisfy?", "source_units": ["U6"]},
+        {"text": "What usability criteria define easy for small farm owners?", "source_units": ["U5"]}
+      ],
+      "follow_up_questions": [
+        {"text": "What booth attributes should managers assign?", "source_units": ["U3"]},
+        {"text": "Should vendors be able to save incomplete applications?", "source_units": ["U2"]}
+      ],
+      "notes": [
+        {"text": "Online rent payment can be added later.", "source_units": ["U7"]}
+      ]
+    }
+  }
+]

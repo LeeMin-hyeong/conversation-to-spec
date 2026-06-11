@@ -1,21 +1,23 @@
-default_model: qwen2_5_3b_instruct
+default_model: qwen3_0.6b
 
 compare_models:
   - qwen_0_5b
-  - qwen_1_5b
-  - tinyllama_1_1b
-  - gemma_3_1b_it
+  - qwen3_0_5b
   - qwen2_5_3b_instruct
-  - phi_3_5_mini_instruct
+  - qwen3_5_0_8b
 
 generation:
-  max_new_tokens: 900
+  max_new_tokens: 2048
   temperature: 0.0
   top_p: 1.0
   do_sample: false
   max_retries: 2
 
 models:
+  qwen3_0.6b:
+    hf_repo_id: Qwen/Qwen3-0.6B
+  qwen3_4b:
+    hf_repo_id: Qwen/Qwen3-4B-Instruct-2507
   qwen_0_5b:
     hf_repo_id: Qwen/Qwen2.5-0.5B-Instruct
   qwen_1_5b:

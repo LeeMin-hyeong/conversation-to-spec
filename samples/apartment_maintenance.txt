@@ -1,0 +1,10 @@
+Our apartment management office wants a portal for maintenance requests.
+Residents should submit maintenance issues with category, description, apartment number, preferred visit time, and photos.
+Property managers need a dashboard to assign requests to technicians and update request status.
+Residents should receive SMS or email updates when a technician is assigned or a request is completed.
+The system must not reveal a resident's phone number or apartment number to other residents.
+Most residents will use phones, so request submission should be easy on mobile screens.
+The first release must be ready before the summer move-in week.
+Online rent payment may be added later, but it should not be part of launch.
+The office wants the portal to look clean and trustworthy.
+We have not decided whether residents should use invite links or permanent accounts.

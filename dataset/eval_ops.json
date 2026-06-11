@@ -1,0 +1,234 @@
+[
+  {
+    "id": "inventory_alert_dashboard",
+    "conversation_text": "We need an inventory alert dashboard for our small retail chain.\nStore managers should see low-stock products by branch.\nWarehouse staff should update received shipments from a tablet.\nThe dashboard must refresh quickly during morning restocking.\nThe interface should be easy for part-time staff.\nSupplier auto-ordering might be added next year.\nThe first release must be ready before the holiday sale.",
+    "gold": {
+      "project_summary": "The project is an inventory alert dashboard for store and warehouse staff with low-stock visibility, shipment updates, performance expectations, and first-release scope limits.",
+      "functional_requirements": [
+        {"text": "The system shall show store managers low-stock products by branch.", "source_units": ["U2"]},
+        {"text": "The system shall allow warehouse staff to update received shipments from a tablet.", "source_units": ["U3"]}
+      ],
+      "non_functional_requirements": [
+        {"text": "The system should refresh inventory information quickly during morning restocking.", "source_units": ["U4"]}
+      ],
+      "constraints": [
+        {"text": "Supplier auto-ordering shall be excluded from the first release.", "source_units": ["U6"]},
+        {"text": "The first release shall be completed before the holiday sale.", "source_units": ["U7"]}
+      ],
+      "open_questions": [
+        {"text": "What response-time target defines quickly during morning restocking?", "source_units": ["U4"]},
+        {"text": "What usability criteria define easy for part-time staff?", "source_units": ["U5"]}
+      ],
+      "follow_up_questions": [
+        {"text": "Which branches and product categories should be included in the first release?", "source_units": ["U2"]},
+        {"text": "Should supplier auto-ordering be documented as future scope only?", "source_units": ["U6"]}
+      ],
+      "notes": [
+        {"text": "Supplier auto-ordering is a future-scope idea.", "source_units": ["U6"]}
+      ]
+    }
+  },
+  {
+    "id": "field_service_scheduler",
+    "conversation_text": "Our appliance repair company needs a field service scheduling tool.\nDispatchers should assign technicians to customer visits.\nTechnicians need to update job status and upload photos from the mobile app.\nCustomers should receive appointment reminders by SMS.\nThe app must work reliably in areas with weak signal.\nThe map view can be simple for now.\nRoute optimization is planned for a later phase.",
+    "gold": {
+      "project_summary": "The project is a field service scheduling tool with dispatcher assignment, technician mobile updates, customer reminders, and reliability needs for weak-signal areas.",
+      "functional_requirements": [
+        {"text": "The system shall allow dispatchers to assign technicians to customer visits.", "source_units": ["U2"]},
+        {"text": "The system shall allow technicians to update job status and upload photos from mobile devices.", "source_units": ["U3"]},
+        {"text": "The system shall send appointment reminders to customers by SMS.", "source_units": ["U4"]}
+      ],
+      "non_functional_requirements": [
+        {"text": "The system should remain reliable in areas with weak signal.", "source_units": ["U5"]}
+      ],
+      "constraints": [
+        {"text": "Route optimization shall be excluded from the current release.", "source_units": ["U7"]}
+      ],
+      "open_questions": [
+        {"text": "What offline or retry behavior is required for weak-signal areas?", "source_units": ["U5"]},
+        {"text": "What map details are required for the simple map view?", "source_units": ["U6"]}
+      ],
+      "follow_up_questions": [
+        {"text": "Which SMS provider should be used for appointment reminders?", "source_units": ["U4"]},
+        {"text": "What job status values should technicians be able to select?", "source_units": ["U3"]}
+      ],
+      "notes": [
+        {"text": "Route optimization is planned for a later phase.", "source_units": ["U7"]}
+      ]
+    }
+  },
+  {
+    "id": "warehouse_picklist",
+    "conversation_text": "We want a warehouse picklist app for order fulfillment.\nPickers should see assigned orders sorted by aisle.\nSupervisors need to reassign urgent orders when staff are absent.\nThe app should scan barcodes with the existing handheld devices.\nIt must prevent duplicate picking of the same order line.\nThe screen should be simple enough for seasonal workers.\nVoice picking can wait until the next release.",
+    "gold": {
+      "project_summary": "The project is a warehouse picklist app supporting aisle-sorted order picking, supervisor reassignment, barcode scanning, duplicate-pick prevention, and future voice-picking scope.",
+      "functional_requirements": [
+        {"text": "The system shall show pickers assigned orders sorted by aisle.", "source_units": ["U2"]},
+        {"text": "The system shall allow supervisors to reassign urgent orders.", "source_units": ["U3"]},
+        {"text": "The system shall scan barcodes using existing handheld devices.", "source_units": ["U4"]}
+      ],
+      "non_functional_requirements": [
+        {"text": "The system must prevent duplicate picking of the same order line.", "source_units": ["U5"]}
+      ],
+      "constraints": [
+        {"text": "Voice picking shall be excluded from the next release.", "source_units": ["U7"]}
+      ],
+      "open_questions": [
+        {"text": "What usability criteria define simple enough for seasonal workers?", "source_units": ["U6"]},
+        {"text": "Which existing handheld device models must be supported?", "source_units": ["U4"]}
+      ],
+      "follow_up_questions": [
+        {"text": "How should the system resolve conflicts when two pickers open the same order?", "source_units": ["U5"]},
+        {"text": "What order priority rules should supervisors use for urgent reassignment?", "source_units": ["U3"]}
+      ],
+      "notes": [
+        {"text": "Voice picking is future scope.", "source_units": ["U7"]}
+      ]
+    }
+  },
+  {
+    "id": "nonprofit_donation_portal",
+    "conversation_text": "Our nonprofit needs a donation portal for recurring donors.\nVisitors should make one-time or monthly donations.\nDonors should receive email receipts automatically.\nStaff need an export of donor records for accounting.\nThe payment flow must be secure and trustworthy.\nThe design should feel warm and simple.\nCorporate matching gifts can be added later.",
+    "gold": {
+      "project_summary": "The project is a nonprofit donation portal with one-time and recurring donations, receipt emails, accounting exports, and security expectations.",
+      "functional_requirements": [
+        {"text": "The system shall allow visitors to make one-time and monthly donations.", "source_units": ["U2"]},
+        {"text": "The system shall send automatic email receipts to donors.", "source_units": ["U3"]},
+        {"text": "The system shall allow staff to export donor records for accounting.", "source_units": ["U4"]}
+      ],
+      "non_functional_requirements": [
+        {"text": "The payment flow must be secure and trustworthy.", "source_units": ["U5"]}
+      ],
+      "constraints": [
+        {"text": "Corporate matching gifts shall be deferred to a later release.", "source_units": ["U7"]}
+      ],
+      "open_questions": [
+        {"text": "Which payment processor and security controls are required?", "source_units": ["U5"]},
+        {"text": "What visual references define warm and simple design?", "source_units": ["U6"]}
+      ],
+      "follow_up_questions": [
+        {"text": "What accounting export format is required?", "source_units": ["U4"]},
+        {"text": "Should donors be able to manage or cancel monthly donations?", "source_units": ["U2"]}
+      ],
+      "notes": [
+        {"text": "Corporate matching gifts are planned for later.", "source_units": ["U7"]}
+      ]
+    }
+  },
+  {
+    "id": "city_permit_tracker",
+    "conversation_text": "The city planning office needs a permit status tracker.\nResidents should search applications by address or permit number.\nReviewers need to update status and add comments.\nApplicants should receive email notifications when status changes.\nThe public page must not expose private reviewer notes.\nThe interface should be clear for non-technical residents.\nOnline fee payment is not part of this phase.",
+    "gold": {
+      "project_summary": "The project is a city permit tracker for residents, applicants, and reviewers, with public search, status updates, notifications, and privacy constraints.",
+      "functional_requirements": [
+        {"text": "The system shall allow residents to search permit applications by address or permit number.", "source_units": ["U2"]},
+        {"text": "The system shall allow reviewers to update permit status and add comments.", "source_units": ["U3"]},
+        {"text": "The system shall email applicants when permit status changes.", "source_units": ["U4"]}
+      ],
+      "non_functional_requirements": [
+        {"text": "The public page must not expose private reviewer notes.", "source_units": ["U5"]}
+      ],
+      "constraints": [
+        {"text": "Online fee payment shall not be included in this phase.", "source_units": ["U7"]}
+      ],
+      "open_questions": [
+        {"text": "Which reviewer comments are public and which are private?", "source_units": ["U5"]},
+        {"text": "What makes the interface clear for non-technical residents?", "source_units": ["U6"]}
+      ],
+      "follow_up_questions": [
+        {"text": "Should residents need an account to search permit status?", "source_units": ["U2"]},
+        {"text": "Which email templates are required for each status change?", "source_units": ["U4"]}
+      ],
+      "notes": [
+        {"text": "Online fee payment is out of scope for this phase.", "source_units": ["U7"]}
+      ]
+    }
+  },
+  {
+    "id": "clinic_lab_results",
+    "conversation_text": "Our clinic wants a patient portal for lab results.\nPatients should see released lab reports after doctor approval.\nDoctors need to review results and mark them ready for release.\nPatients should get an email when a new report is available.\nThe portal must protect personal health information.\nThe wording should be easy for patients to understand.\nInsurance claim features will be considered later.",
+    "gold": {
+      "project_summary": "The project is a clinic lab-results portal with doctor approval, patient report access, email notifications, health-data protection, and future insurance scope.",
+      "functional_requirements": [
+        {"text": "The system shall allow patients to view lab reports after doctor approval.", "source_units": ["U2"]},
+        {"text": "The system shall allow doctors to review results and mark them ready for release.", "source_units": ["U3"]},
+        {"text": "The system shall email patients when a new report is available.", "source_units": ["U4"]}
+      ],
+      "non_functional_requirements": [
+        {"text": "The portal must protect personal health information.", "source_units": ["U5"]}
+      ],
+      "constraints": [
+        {"text": "Insurance claim features shall be excluded from the current release.", "source_units": ["U7"]}
+      ],
+      "open_questions": [
+        {"text": "What health-data security and compliance controls are required?", "source_units": ["U5"]},
+        {"text": "What reading level should patient-facing wording target?", "source_units": ["U6"]}
+      ],
+      "follow_up_questions": [
+        {"text": "Should patients be able to download lab reports as PDF files?", "source_units": ["U2"]},
+        {"text": "What doctor approval workflow is required before release?", "source_units": ["U3"]}
+      ],
+      "notes": [
+        {"text": "Insurance claim features are future scope.", "source_units": ["U7"]}
+      ]
+    }
+  },
+  {
+    "id": "campus_maintenance",
+    "conversation_text": "Facilities wants a campus maintenance request system.\nStudents should submit requests with location, category, and photos.\nMaintenance staff should assign requests and update progress.\nRequesters should receive notifications when work is completed.\nThe system should be usable from phones around campus.\nPriority rules are unclear right now.\nIntegration with the finance system can happen later.",
+    "gold": {
+      "project_summary": "The project is a campus maintenance request system with student submissions, staff assignment, progress updates, mobile usage, and unresolved priority rules.",
+      "functional_requirements": [
+        {"text": "The system shall allow students to submit maintenance requests with location, category, and photos.", "source_units": ["U2"]},
+        {"text": "The system shall allow maintenance staff to assign requests and update progress.", "source_units": ["U3"]},
+        {"text": "The system shall notify requesters when work is completed.", "source_units": ["U4"]}
+      ],
+      "non_functional_requirements": [
+        {"text": "The system should be usable from phones around campus.", "source_units": ["U5"]}
+      ],
+      "constraints": [
+        {"text": "Finance system integration shall be deferred to a later phase.", "source_units": ["U7"]}
+      ],
+      "open_questions": [
+        {"text": "What priority rules should determine request urgency?", "source_units": ["U6"]},
+        {"text": "Which mobile browsers or devices must be supported?", "source_units": ["U5"]}
+      ],
+      "follow_up_questions": [
+        {"text": "What request categories should be available?", "source_units": ["U2"]},
+        {"text": "Who is allowed to assign maintenance requests?", "source_units": ["U3"]}
+      ],
+      "notes": [
+        {"text": "Finance integration is future scope.", "source_units": ["U7"]}
+      ]
+    }
+  },
+  {
+    "id": "restaurant_supplier_orders",
+    "conversation_text": "Our restaurant group needs a supplier ordering portal.\nKitchen managers should create weekly ingredient orders.\nSuppliers should confirm quantities and delivery dates.\nAccounting staff need a CSV export of confirmed orders.\nThe portal should prevent accidental duplicate orders.\nIt should be quick to use during prep time.\nAutomatic invoice matching is for a future release.",
+    "gold": {
+      "project_summary": "The project is a supplier ordering portal for kitchen managers, suppliers, and accounting staff with duplicate-order prevention and future invoice matching.",
+      "functional_requirements": [
+        {"text": "The system shall allow kitchen managers to create weekly ingredient orders.", "source_units": ["U2"]},
+        {"text": "The system shall allow suppliers to confirm quantities and delivery dates.", "source_units": ["U3"]},
+        {"text": "The system shall export confirmed orders as CSV for accounting staff.", "source_units": ["U4"]}
+      ],
+      "non_functional_requirements": [
+        {"text": "The portal should prevent accidental duplicate orders.", "source_units": ["U5"]}
+      ],
+      "constraints": [
+        {"text": "Automatic invoice matching shall be excluded from the current release.", "source_units": ["U7"]}
+      ],
+      "open_questions": [
+        {"text": "What workflow or confirmation should prevent duplicate orders?", "source_units": ["U5"]},
+        {"text": "What time target defines quick use during prep time?", "source_units": ["U6"]}
+      ],
+      "follow_up_questions": [
+        {"text": "What columns are required in the accounting CSV export?", "source_units": ["U4"]},
+        {"text": "Should suppliers receive email alerts for new orders?", "source_units": ["U3"]}
+      ],
+      "notes": [
+        {"text": "Automatic invoice matching is future scope.", "source_units": ["U7"]}
+      ]
+    }
+  }
+]

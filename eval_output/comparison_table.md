@@ -1,4 +1,0 @@
-| model | functional_f1 | non_functional_f1 | constraint_f1 | macro_f1 | open_question_recall | follow_up_coverage | hallucination_rate | schema_validity_rate | json_parse_success | pydantic_success | retry_success | usable_output | semantic_warning | stage1_candidates | stage2_discard_rate | stage4_open_questions | stage5_follow_ups | avg_latency_sec |
-|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| mock | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 1.0000 | 1.0000 | 1.0000 | 1.0000 | 0.0000 | 1.0000 | 0.1667 | 7.8333 | 0.0000 | 1.0000 | 4.0000 | 0.0014 |
-| Qwen_Qwen2.5-0.5B-Instruct | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 1.0000 | 0.8333 | 0.8333 | 0.8333 | 0.0000 | 0.8333 | 0.6667 | 5.6667 | 0.0000 | 1.0000 | 1.0000 | 45.3029 |

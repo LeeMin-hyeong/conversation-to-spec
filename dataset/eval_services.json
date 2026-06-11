@@ -1,0 +1,236 @@
+[
+  {
+    "id": "after_school_program",
+    "conversation_text": "We need a registration system for after-school programs.\nParents should browse programs by age group and register children.\nStaff should approve registrations and manage waitlists.\nParents should receive email confirmations after approval.\nThe system should be simple for busy parents on phones.\nScholarship application support may be added later.\nThe first launch must support only three pilot schools.",
+    "gold": {
+      "project_summary": "The project is an after-school registration system with parent browsing, child registration, staff approval, waitlists, email confirmations, mobile usability, and pilot-school scope.",
+      "functional_requirements": [
+        {"text": "The system shall allow parents to browse programs by age group and register children.", "source_units": ["U2"]},
+        {"text": "The system shall allow staff to approve registrations and manage waitlists.", "source_units": ["U3"]},
+        {"text": "The system shall send email confirmations to parents after approval.", "source_units": ["U4"]}
+      ],
+      "non_functional_requirements": [
+        {"text": "The system should provide a simple mobile experience for busy parents.", "source_units": ["U5"]}
+      ],
+      "constraints": [
+        {"text": "The first launch shall support only three pilot schools.", "source_units": ["U7"]},
+        {"text": "Scholarship application support shall be deferred to a later release.", "source_units": ["U6"]}
+      ],
+      "open_questions": [
+        {"text": "Which three pilot schools are included in the first launch?", "source_units": ["U7"]},
+        {"text": "What usability criteria define simple for busy parents on phones?", "source_units": ["U5"]}
+      ],
+      "follow_up_questions": [
+        {"text": "What parent and child information is required during registration?", "source_units": ["U2"]},
+        {"text": "How should waitlist priority be calculated?", "source_units": ["U3"]}
+      ],
+      "notes": [
+        {"text": "Scholarship application support is future scope.", "source_units": ["U6"]}
+      ]
+    }
+  },
+  {
+    "id": "animal_shelter_adoption",
+    "conversation_text": "Our animal shelter needs an adoption application tracker.\nVisitors should view adoptable pets and submit applications.\nCase workers need to review applications and schedule interviews.\nApplicants should get status updates by email.\nThe public pet pages should load quickly on mobile.\nThe application questions are not finalized yet.\nDonation checkout can be added after launch.",
+    "gold": {
+      "project_summary": "The project is an adoption application tracker with public pet listings, online applications, case-worker review, interview scheduling, and email status updates.",
+      "functional_requirements": [
+        {"text": "The system shall allow visitors to view adoptable pets and submit adoption applications.", "source_units": ["U2"]},
+        {"text": "The system shall allow case workers to review applications and schedule interviews.", "source_units": ["U3"]},
+        {"text": "The system shall send application status updates by email.", "source_units": ["U4"]}
+      ],
+      "non_functional_requirements": [
+        {"text": "The public pet pages should load quickly on mobile devices.", "source_units": ["U5"]}
+      ],
+      "constraints": [
+        {"text": "Donation checkout shall be excluded from the launch release.", "source_units": ["U7"]}
+      ],
+      "open_questions": [
+        {"text": "What adoption application questions are required?", "source_units": ["U6"]},
+        {"text": "What mobile page-load target is required for public pet pages?", "source_units": ["U5"]}
+      ],
+      "follow_up_questions": [
+        {"text": "What interview time slots and locations should be supported?", "source_units": ["U3"]},
+        {"text": "Should applicants create accounts or use email links?", "source_units": ["U2"]}
+      ],
+      "notes": [
+        {"text": "Donation checkout can be added after launch.", "source_units": ["U7"]}
+      ]
+    }
+  },
+  {
+    "id": "museum_event_ticketing",
+    "conversation_text": "The museum wants an event ticketing page for workshops and lectures.\nVisitors should reserve free or paid tickets.\nStaff should set capacity limits and close registration.\nAttendees should receive QR-code tickets by email.\nThe checkout must be accessible for older visitors.\nMember discounts are still undecided.\nOn-site kiosk support is not needed for the first release.",
+    "gold": {
+      "project_summary": "The project is a museum event ticketing page with free and paid ticket reservations, capacity management, QR-code tickets, accessibility needs, and deferred kiosk support.",
+      "functional_requirements": [
+        {"text": "The system shall allow visitors to reserve free or paid event tickets.", "source_units": ["U2"]},
+        {"text": "The system shall allow staff to set capacity limits and close registration.", "source_units": ["U3"]},
+        {"text": "The system shall email QR-code tickets to attendees.", "source_units": ["U4"]}
+      ],
+      "non_functional_requirements": [
+        {"text": "The checkout must be accessible for older visitors.", "source_units": ["U5"]}
+      ],
+      "constraints": [
+        {"text": "On-site kiosk support shall not be included in the first release.", "source_units": ["U7"]}
+      ],
+      "open_questions": [
+        {"text": "Should member discounts be included, and how should they be calculated?", "source_units": ["U6"]},
+        {"text": "Which accessibility standards are required for older visitors?", "source_units": ["U5"]}
+      ],
+      "follow_up_questions": [
+        {"text": "Which payment provider should process paid tickets?", "source_units": ["U2"]},
+        {"text": "What QR-code scanning workflow is expected at event check-in?", "source_units": ["U4"]}
+      ],
+      "notes": [
+        {"text": "On-site kiosk support is not required for the first release.", "source_units": ["U7"]}
+      ]
+    }
+  },
+  {
+    "id": "home_health_visit_log",
+    "conversation_text": "A home health agency needs a visit logging app.\nCaregivers should check in and check out at patient homes.\nNurses should review visit notes and flag follow-up needs.\nCoordinators need weekly reports for supervisors.\nThe app must protect patient information.\nIt should still work when a caregiver has poor connectivity.\nPayroll integration will come later.",
+    "gold": {
+      "project_summary": "The project is a home health visit logging app with caregiver check-in/out, nurse review, coordinator reports, health-data protection, and weak-connectivity support.",
+      "functional_requirements": [
+        {"text": "The system shall allow caregivers to check in and check out at patient homes.", "source_units": ["U2"]},
+        {"text": "The system shall allow nurses to review visit notes and flag follow-up needs.", "source_units": ["U3"]},
+        {"text": "The system shall provide weekly reports for coordinators and supervisors.", "source_units": ["U4"]}
+      ],
+      "non_functional_requirements": [
+        {"text": "The app must protect patient information.", "source_units": ["U5"]},
+        {"text": "The app should work when caregivers have poor connectivity.", "source_units": ["U6"]}
+      ],
+      "constraints": [
+        {"text": "Payroll integration shall be deferred to a later release.", "source_units": ["U7"]}
+      ],
+      "open_questions": [
+        {"text": "What offline behavior is required during poor connectivity?", "source_units": ["U6"]},
+        {"text": "What patient-information security controls are required?", "source_units": ["U5"]}
+      ],
+      "follow_up_questions": [
+        {"text": "What data should be included in weekly supervisor reports?", "source_units": ["U4"]},
+        {"text": "Should check-in use GPS, manual confirmation, or both?", "source_units": ["U2"]}
+      ],
+      "notes": [
+        {"text": "Payroll integration is planned for later.", "source_units": ["U7"]}
+      ]
+    }
+  },
+  {
+    "id": "community_food_bank",
+    "conversation_text": "The food bank needs a volunteer shift system.\nVolunteers should sign up for packing and delivery shifts.\nCoordinators should approve volunteers and track attendance.\nThe system should send reminder texts before each shift.\nThe signup form should be available in English and Spanish.\nThe site should be very easy to use.\nBackground check integration is future scope.",
+    "gold": {
+      "project_summary": "The project is a volunteer shift system for a food bank with shift signup, coordinator approval, attendance tracking, text reminders, bilingual signup, and future background-check scope.",
+      "functional_requirements": [
+        {"text": "The system shall allow volunteers to sign up for packing and delivery shifts.", "source_units": ["U2"]},
+        {"text": "The system shall allow coordinators to approve volunteers and track attendance.", "source_units": ["U3"]},
+        {"text": "The system shall send reminder texts before each shift.", "source_units": ["U4"]}
+      ],
+      "non_functional_requirements": [
+        {"text": "The signup form should be available in English and Spanish.", "source_units": ["U5"]}
+      ],
+      "constraints": [
+        {"text": "Background check integration shall be treated as future scope.", "source_units": ["U7"]}
+      ],
+      "open_questions": [
+        {"text": "What usability criteria define very easy to use?", "source_units": ["U6"]},
+        {"text": "Which SMS provider should send reminder texts?", "source_units": ["U4"]}
+      ],
+      "follow_up_questions": [
+        {"text": "What volunteer information is required before approval?", "source_units": ["U3"]},
+        {"text": "Should bilingual content be manually translated or managed by staff?", "source_units": ["U5"]}
+      ],
+      "notes": [
+        {"text": "Background check integration is future scope.", "source_units": ["U7"]}
+      ]
+    }
+  },
+  {
+    "id": "senior_center_transport",
+    "conversation_text": "The senior center needs a ride request system.\nMembers should request rides to appointments or center activities.\nDispatchers should assign volunteer drivers and vehicles.\nMembers should receive phone or SMS reminders.\nThe interface must be readable for seniors.\nRecurring ride rules are not clear yet.\nPayment collection is not required.",
+    "gold": {
+      "project_summary": "The project is a senior center ride request system with member ride requests, dispatcher assignment, reminders, readability needs, and no payment collection.",
+      "functional_requirements": [
+        {"text": "The system shall allow members to request rides to appointments or center activities.", "source_units": ["U2"]},
+        {"text": "The system shall allow dispatchers to assign volunteer drivers and vehicles.", "source_units": ["U3"]},
+        {"text": "The system shall send phone or SMS reminders to members.", "source_units": ["U4"]}
+      ],
+      "non_functional_requirements": [
+        {"text": "The interface must be readable for seniors.", "source_units": ["U5"]}
+      ],
+      "constraints": [
+        {"text": "Payment collection shall not be required.", "source_units": ["U7"]}
+      ],
+      "open_questions": [
+        {"text": "What recurring ride rules should be supported?", "source_units": ["U6"]},
+        {"text": "What font size or accessibility criteria define readable for seniors?", "source_units": ["U5"]}
+      ],
+      "follow_up_questions": [
+        {"text": "Should members choose phone reminders, SMS reminders, or both?", "source_units": ["U4"]},
+        {"text": "What vehicle capacity and accessibility information must dispatchers see?", "source_units": ["U3"]}
+      ],
+      "notes": [
+        {"text": "Payment collection is out of scope.", "source_units": ["U7"]}
+      ]
+    }
+  },
+  {
+    "id": "small_hotel_housekeeping",
+    "conversation_text": "Our small hotel needs a housekeeping task board.\nFront desk staff should mark rooms as checked out.\nHousekeepers should see assigned rooms and update cleaning status.\nManagers need a daily completion summary.\nThe board should update fast on tablets.\nThe colors should be clear for new staff.\nGuest messaging is not part of this version.",
+    "gold": {
+      "project_summary": "The project is a housekeeping task board for front desk staff, housekeepers, and managers, with tablet performance expectations and no guest messaging in this version.",
+      "functional_requirements": [
+        {"text": "The system shall allow front desk staff to mark rooms as checked out.", "source_units": ["U2"]},
+        {"text": "The system shall allow housekeepers to view assigned rooms and update cleaning status.", "source_units": ["U3"]},
+        {"text": "The system shall provide managers with a daily completion summary.", "source_units": ["U4"]}
+      ],
+      "non_functional_requirements": [
+        {"text": "The board should update fast on tablets.", "source_units": ["U5"]}
+      ],
+      "constraints": [
+        {"text": "Guest messaging shall not be included in this version.", "source_units": ["U7"]}
+      ],
+      "open_questions": [
+        {"text": "What update latency defines fast on tablets?", "source_units": ["U5"]},
+        {"text": "What color scheme is clear for new staff?", "source_units": ["U6"]}
+      ],
+      "follow_up_questions": [
+        {"text": "What cleaning status values should housekeepers use?", "source_units": ["U3"]},
+        {"text": "What data should be included in the daily completion summary?", "source_units": ["U4"]}
+      ],
+      "notes": [
+        {"text": "Guest messaging is out of scope for this version.", "source_units": ["U7"]}
+      ]
+    }
+  },
+  {
+    "id": "local_recycling_pickup",
+    "conversation_text": "A recycling cooperative needs a pickup scheduling site.\nResidents should request pickup dates for large recyclable items.\nDrivers should see route lists and mark pickups complete.\nAdmins need to export monthly pickup totals.\nThe site should work well on low-cost Android phones.\nItem category rules are not finalized.\nOnline payment should not be included.",
+    "gold": {
+      "project_summary": "The project is a recycling pickup scheduling site with resident requests, driver route lists, admin exports, low-cost Android support, and no online payment.",
+      "functional_requirements": [
+        {"text": "The system shall allow residents to request pickup dates for large recyclable items.", "source_units": ["U2"]},
+        {"text": "The system shall allow drivers to view route lists and mark pickups complete.", "source_units": ["U3"]},
+        {"text": "The system shall allow admins to export monthly pickup totals.", "source_units": ["U4"]}
+      ],
+      "non_functional_requirements": [
+        {"text": "The site should work well on low-cost Android phones.", "source_units": ["U5"]}
+      ],
+      "constraints": [
+        {"text": "Online payment shall not be included.", "source_units": ["U7"]}
+      ],
+      "open_questions": [
+        {"text": "What item category rules should be used for pickup requests?", "source_units": ["U6"]},
+        {"text": "Which low-cost Android phone versions must be supported?", "source_units": ["U5"]}
+      ],
+      "follow_up_questions": [
+        {"text": "What fields are required for each pickup request?", "source_units": ["U2"]},
+        {"text": "What format is required for monthly pickup exports?", "source_units": ["U4"]}
+      ],
+      "notes": [
+        {"text": "Online payment is out of scope.", "source_units": ["U7"]}
+      ]
+    }
+  }
+]

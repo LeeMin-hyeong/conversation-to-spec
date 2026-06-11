@@ -1,13 +1,13 @@
 [project]
 name = "conversation-to-spec"
-version = "0.1.0"
+version = "0.1.1"
 description = "Prototype that converts unlabeled conversations into structured software requirements."
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
   "pydantic>=2.8,<3.0",
   "PyYAML>=6.0.1,<7.0",
-  "transformers>=4.45,<5.0",
+  "transformers>=4.57,<5.0",
   "torch==2.11.0",
   "accelerate>=1.13,<2.0",
   "matplotlib>=3.10,<4.0",

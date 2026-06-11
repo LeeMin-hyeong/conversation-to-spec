@@ -5,11 +5,44 @@ from typing import Iterable
 from app.schemas import ConstraintItem, NoteItem, QuestionItem, RequirementItem, SpecOutput
 
 
+def _format_quality_checks(item: RequirementItem | ConstraintItem) -> str:
+    checks = item.quality_checks
+    return (
+        "quality: "
+        f"atomic={checks.is_atomic}, "
+        f"testable={checks.is_testable}, "
+        f"actor={checks.has_clear_actor}, "
+        f"traceable={checks.has_traceable_evidence}, "
+        f"ambiguity={checks.ambiguity_risk}"
+    )
+
+
+def _format_traceable_item(item: RequirementItem | ConstraintItem) -> list[str]:
+    sources = ", ".join(item.source_units) if item.source_units else "-"
+    lines = [f"- **{item.id}**: {item.text} _(source_units: {sources})_"]
+    if item.evidence_spans:
+        evidence = " | ".join(item.evidence_spans)
+        lines.append(f"  - Evidence: {evidence}")
+    if item.acceptance_criteria:
+        lines.append("  - Acceptance criteria:")
+        lines.extend([f"    - {criterion}" for criterion in item.acceptance_criteria])
+    verification = item.verification
+    score = (
+        "N/A"
+        if verification.source_relevance_score is None
+        else f"{verification.source_relevance_score:.4f}"
+    )
+    lines.append(f"  - Verification: {verification.verdict} (source_relevance={score})")
+    if verification.warnings:
+        lines.append(f"  - Verification warnings: {', '.join(verification.warnings)}")
+    lines.append(f"  - {_format_quality_checks(item)}")
+    return lines
+
+
 def _format_requirement_list(items: Iterable[RequirementItem]) -> list[str]:
     lines: list[str] = []
     for item in items:
-        sources = ", ".join(item.source_units) if item.source_units else "-"
-        lines.append(f"- **{item.id}**: {item.text} _(source_units: {sources})_")
+        lines.extend(_format_traceable_item(item))
     if not lines:
         lines.append("- None")
     return lines
@@ -18,8 +51,7 @@ def _format_requirement_list(items: Iterable[RequirementItem]) -> list[str]:
 def _format_constraint_list(items: Iterable[ConstraintItem]) -> list[str]:
     lines: list[str] = []
     for item in items:
-        sources = ", ".join(item.source_units) if item.source_units else "-"
-        lines.append(f"- **{item.id}**: {item.text} _(source_units: {sources})_")
+        lines.extend(_format_traceable_item(item))
     if not lines:
         lines.append("- None")
     return lines

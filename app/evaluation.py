@@ -12,6 +12,70 @@ from app.pipeline import ConversationToSpecPipeline
 from app.progress import NullProgressReporter
 from app.schemas import SpecOutput
 from app.utils import ensure_dir, model_dump_compat, normalize_text, write_json_file, write_text_file
+from app.verifier import format_verification_report_markdown
+
+
+SEMANTIC_MATCH_THRESHOLD = 0.42
+SEMANTIC_SOURCE_OVERLAP_THRESHOLD = 0.5
+SEMANTIC_MIN_TEXT_WITH_SOURCE_MATCH = 0.12
+SEMANTIC_STOPWORDS = {
+    "the",
+    "a",
+    "an",
+    "and",
+    "or",
+    "to",
+    "of",
+    "for",
+    "in",
+    "on",
+    "with",
+    "be",
+    "is",
+    "are",
+    "it",
+    "this",
+    "that",
+    "should",
+    "shall",
+    "must",
+    "can",
+    "could",
+    "will",
+    "would",
+    "from",
+    "by",
+    "as",
+    "at",
+    "system",
+    "website",
+    "site",
+    "app",
+    "application",
+}
+
+SEMANTIC_TOKEN_ALIASES = {
+    "booking": {"book", "reserve", "reservation"},
+    "book": {"booking", "reserve", "reservation"},
+    "reserve": {"book", "booking", "reservation"},
+    "reservation": {"book", "booking", "reserve"},
+    "quick": {"quickly", "fast", "performance"},
+    "quickly": {"quick", "fast", "performance"},
+    "fast": {"quick", "quickly", "performance"},
+    "phone": {"phones", "mobile"},
+    "phones": {"phone", "mobile"},
+    "mobile": {"phone", "phones"},
+    "secure": {"security"},
+    "security": {"secure"},
+    "reliable": {"reliability"},
+    "reliability": {"reliable"},
+    "simple": {"easy", "usable", "usability"},
+    "easy": {"simple", "usable", "usability"},
+    "ios": {"iphone"},
+    "iphone": {"ios"},
+    "workshop": {"workshops"},
+    "workshops": {"workshop"},
+}
 
 
 @dataclass
@@ -57,6 +121,33 @@ def _extract_texts(items: Any) -> list[str]:
     return output
 
 
+def _extract_eval_records(items: Any) -> list[dict[str, Any]]:
+    if not isinstance(items, list):
+        return []
+    records: list[dict[str, Any]] = []
+    for item in items:
+        if isinstance(item, str):
+            text = item.strip()
+            source_units: list[str] = []
+        elif isinstance(item, dict):
+            text = str(item.get("text", "")).strip()
+            source_units = [
+                str(source_id).strip()
+                for source_id in item.get("source_units", [])
+                if str(source_id).strip()
+            ]
+        else:
+            text = str(getattr(item, "text", "")).strip()
+            source_units = [
+                str(source_id).strip()
+                for source_id in getattr(item, "source_units", [])
+                if str(source_id).strip()
+            ]
+        if text:
+            records.append({"text": text, "source_units": source_units})
+    return records
+
+
 def _prf(pred_items: set[tuple[str, str]], gold_items: set[tuple[str, str]]) -> dict[str, float]:
     tp = len(pred_items & gold_items)
     fp = len(pred_items - gold_items)
@@ -65,6 +156,93 @@ def _prf(pred_items: set[tuple[str, str]], gold_items: set[tuple[str, str]]) -> 
     recall = tp / (tp + fn) if (tp + fn) else (1.0 if not gold_items else 0.0)
     f1 = 2 * precision * recall / (precision + recall) if (precision + recall) else 0.0
 
+    return {
+        "precision": precision,
+        "recall": recall,
+        "f1": f1,
+        "tp": float(tp),
+        "fp": float(fp),
+        "fn": float(fn),
+    }
+
+
+def _semantic_tokens(text: str) -> set[str]:
+    tokens: set[str] = set()
+    for token in normalize_text(text).split():
+        if not token or token in SEMANTIC_STOPWORDS or len(token) <= 2:
+            continue
+        tokens.add(token)
+        if token.endswith("ing") and len(token) > 5:
+            tokens.add(token[:-3])
+        if token.endswith("s") and len(token) > 4:
+            tokens.add(token[:-1])
+        tokens.update(SEMANTIC_TOKEN_ALIASES.get(token, set()))
+    return tokens
+
+
+def _semantic_similarity(left: str, right: str) -> float:
+    left_tokens = _semantic_tokens(left)
+    right_tokens = _semantic_tokens(right)
+    if not left_tokens or not right_tokens:
+        return 0.0
+    overlap = len(left_tokens & right_tokens)
+    return (2 * overlap) / (len(left_tokens) + len(right_tokens))
+
+
+def _source_similarity(left_sources: list[str], right_sources: list[str]) -> float:
+    left = {source_id for source_id in left_sources if source_id}
+    right = {source_id for source_id in right_sources if source_id}
+    if not left or not right:
+        return 0.0
+    return len(left & right) / max(len(left), len(right))
+
+
+def _semantic_prf(
+    samples: list[dict[str, Any]],
+    predicted_specs: dict[str, SpecOutput],
+    category_key: str,
+) -> dict[str, float]:
+    tp = 0
+    fp = 0
+    fn = 0
+    for sample in samples:
+        sid = str(sample["id"])
+        gold_records = _extract_eval_records(sample.get("gold", {}).get(category_key, []))
+        spec = predicted_specs.get(sid)
+        pred_records = (
+            _extract_eval_records(list(getattr(spec, category_key, [])))
+            if spec is not None
+            else []
+        )
+
+        matched_gold: set[int] = set()
+        for pred in pred_records:
+            best_index = -1
+            best_score = 0.0
+            for index, gold in enumerate(gold_records):
+                if index in matched_gold:
+                    continue
+                text_score = _semantic_similarity(pred["text"], gold["text"])
+                source_score = _source_similarity(pred["source_units"], gold["source_units"])
+                score = text_score
+                if (
+                    source_score >= SEMANTIC_SOURCE_OVERLAP_THRESHOLD
+                    and text_score >= SEMANTIC_MIN_TEXT_WITH_SOURCE_MATCH
+                ):
+                    score = max(score, SEMANTIC_MATCH_THRESHOLD)
+                if score > best_score:
+                    best_score = score
+                    best_index = index
+            if best_index >= 0 and best_score >= SEMANTIC_MATCH_THRESHOLD:
+                tp += 1
+                matched_gold.add(best_index)
+            else:
+                fp += 1
+        fn += max(0, len(gold_records) - len(matched_gold))
+
+    precision = tp / (tp + fp) if (tp + fp) else 0.0
+    recall = tp / (tp + fn) if (tp + fn) else (1.0 if fn == 0 else 0.0)
+    f1 = 2 * precision * recall / (precision + recall) if (precision + recall) else 0.0
     return {
         "precision": precision,
         "recall": recall,
@@ -103,6 +281,111 @@ def _pred_category_set(
     return values
 
 
+def _pred_requirement_records(predicted_specs: dict[str, SpecOutput]) -> list[tuple[SpecOutput, Any]]:
+    records: list[tuple[SpecOutput, Any]] = []
+    for spec in predicted_specs.values():
+        for item in (
+            list(spec.functional_requirements)
+            + list(spec.non_functional_requirements)
+            + list(spec.constraints)
+        ):
+            records.append((spec, item))
+    return records
+
+
+def _non_empty_strings(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [str(item).strip() for item in value if str(item).strip()]
+
+
+def _traceability_ok(spec: SpecOutput, item: Any) -> bool:
+    valid_unit_ids = {unit.id for unit in spec.conversation_units}
+    source_units = [str(source_id).strip() for source_id in getattr(item, "source_units", []) if str(source_id).strip()]
+    evidence_spans = _non_empty_strings(getattr(item, "evidence_spans", []))
+    return bool(source_units and evidence_spans and all(source_id in valid_unit_ids for source_id in source_units))
+
+
+def _quality_gate_ok(item: Any) -> bool:
+    checks = getattr(item, "quality_checks", None)
+    return bool(
+        checks
+        and checks.is_atomic
+        and checks.is_testable
+        and checks.has_clear_actor
+        and checks.has_traceable_evidence
+    )
+
+
+def _requirement_quality_metrics(predicted_specs: dict[str, SpecOutput]) -> dict[str, float]:
+    records = _pred_requirement_records(predicted_specs)
+    total = len(records)
+    if not total:
+        return {
+            "requirement_count": 0.0,
+            "acceptance_criteria_coverage": 0.0,
+            "evidence_span_coverage": 0.0,
+            "traceability_coverage": 0.0,
+            "quality_gate_pass_rate": 0.0,
+            "high_ambiguity_rate": 0.0,
+            "source_relevance_avg": 0.0,
+            "groundedness_rate": 0.0,
+            "unsupported_requirement_rate": 0.0,
+            "verification_pass_rate": 0.0,
+        }
+
+    with_acceptance = sum(
+        1 for _, item in records if _non_empty_strings(getattr(item, "acceptance_criteria", []))
+    )
+    with_evidence = sum(
+        1 for _, item in records if _non_empty_strings(getattr(item, "evidence_spans", []))
+    )
+    traceable = sum(1 for spec, item in records if _traceability_ok(spec, item))
+    gate_pass = sum(1 for _, item in records if _quality_gate_ok(item))
+    high_ambiguity = sum(
+        1
+        for _, item in records
+        if str(getattr(getattr(item, "quality_checks", None), "ambiguity_risk", "")).strip().lower()
+        == "high"
+    )
+    relevance_scores = [
+        float(item.verification.source_relevance_score)
+        for _, item in records
+        if getattr(item, "verification", None)
+        and item.verification.source_relevance_score is not None
+    ]
+    grounded = sum(
+        1
+        for _, item in records
+        if getattr(item, "verification", None)
+        and item.verification.verdict in {"SUPPORTED", "PARTIALLY_SUPPORTED"}
+    )
+    unsupported = sum(
+        1
+        for _, item in records
+        if getattr(item, "verification", None)
+        and item.verification.verdict in {"UNSUPPORTED", "CONTRADICTED", "NOT_ENOUGH_INFO"}
+    )
+    verification_pass = sum(
+        1
+        for _, item in records
+        if getattr(item, "verification", None)
+        and item.verification.verdict == "SUPPORTED"
+    )
+    return {
+        "requirement_count": float(total),
+        "acceptance_criteria_coverage": with_acceptance / total,
+        "evidence_span_coverage": with_evidence / total,
+        "traceability_coverage": traceable / total,
+        "quality_gate_pass_rate": gate_pass / total,
+        "high_ambiguity_rate": high_ambiguity / total,
+        "source_relevance_avg": mean(relevance_scores) if relevance_scores else 0.0,
+        "groundedness_rate": grounded / total,
+        "unsupported_requirement_rate": unsupported / total,
+        "verification_pass_rate": verification_pass / total,
+    }
+
+
 def _stage_stat_value(stats_map: dict[str, Any], primary_key: str, fallback_keys: Iterable[str]) -> Optional[float]:
     for key in (primary_key, *fallback_keys):
         if key not in stats_map:
@@ -139,6 +422,11 @@ def compute_metrics(
     oq_metrics = _prf(oq_pred, oq_gold)
     fu_metrics = _prf(fu_pred, fu_gold)
     note_metrics = _prf(note_pred, note_gold)
+    fr_semantic = _semantic_prf(samples, predicted_specs, "functional_requirements")
+    nfr_semantic = _semantic_prf(samples, predicted_specs, "non_functional_requirements")
+    con_semantic = _semantic_prf(samples, predicted_specs, "constraints")
+    open_question_semantic = _semantic_prf(samples, predicted_specs, "open_questions")
+    follow_up_semantic = _semantic_prf(samples, predicted_specs, "follow_up_questions")
 
     category_f1 = [
         fr_metrics["f1"],
@@ -149,11 +437,20 @@ def compute_metrics(
         note_metrics["f1"],
     ]
     macro_f1 = sum(category_f1) / len(category_f1)
+    semantic_requirement_macro_f1 = (
+        fr_semantic["f1"] + nfr_semantic["f1"] + con_semantic["f1"]
+    ) / 3
 
     all_req_pred = fr_pred | nfr_pred | con_pred
     all_req_gold = fr_gold | nfr_gold | con_gold
-    unsupported = all_req_pred - all_req_gold
-    hallucination_rate = len(unsupported) / len(all_req_pred) if all_req_pred else 0.0
+    exact_unsupported = all_req_pred - all_req_gold
+    exact_hallucination_rate = (
+        len(exact_unsupported) / len(all_req_pred) if all_req_pred else 0.0
+    )
+    semantic_fp = fr_semantic["fp"] + nfr_semantic["fp"] + con_semantic["fp"]
+    semantic_pred_total = semantic_fp + fr_semantic["tp"] + nfr_semantic["tp"] + con_semantic["tp"]
+    hallucination_rate = semantic_fp / semantic_pred_total if semantic_pred_total else 0.0
+    requirement_quality_metrics = _requirement_quality_metrics(predicted_specs)
 
     sample_count = len(sample_statuses)
     if sample_count:
@@ -206,6 +503,10 @@ def compute_metrics(
     stage2_discard_rate_values: list[float] = []
     stage4_open_question_values: list[float] = []
     stage5_followup_values: list[float] = []
+    num_llm_calls_values: list[float] = []
+    repair_trigger_total = 0.0
+    repair_success_total = 0.0
+    repair_denominator = 0.0
     for status in sample_statuses.values():
         if status.stage_failure:
             stage_failure_counts[status.stage_failure] = (
@@ -240,13 +541,25 @@ def compute_metrics(
         )
         if stage5_followup is not None:
             stage5_followup_values.append(stage5_followup)
+        if "num_llm_calls" in stats_map:
+            try:
+                num_llm_calls_values.append(float(stats_map["num_llm_calls"]))
+            except Exception:
+                pass
+        try:
+            repair_trigger_total += float(stats_map.get("repair_trigger_count", 0.0))
+            repair_success_total += float(stats_map.get("repair_success_count", 0.0))
+            repair_denominator += float(stats_map.get("requirement_quality_enrichment_count", 0.0))
+        except Exception:
+            pass
 
-    successful_latencies = [s.latency_sec for s in sample_statuses.values() if s.success]
-    avg_latency = mean(successful_latencies) if successful_latencies else 0.0
+    observed_latencies = [s.latency_sec for s in sample_statuses.values()]
+    avg_latency = mean(observed_latencies) if observed_latencies else 0.0
     constraint_warning_count = 0
     for spec in predicted_specs.values():
         for warning in list(getattr(spec, "verification_warnings", []) or []):
-            if str(warning).lower().startswith("constraints:"):
+            warning_text = str(warning).lower()
+            if warning_text.startswith("constraints:") or warning_text.startswith("raw_constraints:"):
                 constraint_warning_count += 1
 
     fr_norm = _prf(
@@ -265,22 +578,44 @@ def compute_metrics(
         mean(stage4_open_question_values) if stage4_open_question_values else 0.0
     )
     avg_stage_5_follow_up_count = mean(stage5_followup_values) if stage5_followup_values else 0.0
+    if not repair_denominator:
+        repair_denominator = float(requirement_quality_metrics.get("requirement_count", 0.0))
+    repair_trigger_rate = repair_trigger_total / repair_denominator if repair_denominator else 0.0
+    repair_success_rate = (
+        repair_success_total / repair_trigger_total if repair_trigger_total else 0.0
+    )
 
     return {
         "sample_count": len(samples),
         "functional_precision": fr_metrics["precision"],
         "functional_recall": fr_metrics["recall"],
         "functional_f1": fr_metrics["f1"],
+        "semantic_functional_precision": fr_semantic["precision"],
+        "semantic_functional_recall": fr_semantic["recall"],
+        "semantic_functional_f1": fr_semantic["f1"],
         "non_functional_precision": nfr_metrics["precision"],
         "non_functional_recall": nfr_metrics["recall"],
         "non_functional_f1": nfr_metrics["f1"],
+        "semantic_non_functional_precision": nfr_semantic["precision"],
+        "semantic_non_functional_recall": nfr_semantic["recall"],
+        "semantic_non_functional_f1": nfr_semantic["f1"],
         "constraint_precision": con_metrics["precision"],
         "constraint_recall": con_metrics["recall"],
         "constraint_f1": con_metrics["f1"],
+        "semantic_constraint_precision": con_semantic["precision"],
+        "semantic_constraint_recall": con_semantic["recall"],
+        "semantic_constraint_f1": con_semantic["f1"],
         "requirement_type_macro_f1": macro_f1,
+        "semantic_requirement_macro_f1": semantic_requirement_macro_f1,
         "open_question_recall": oq_metrics["recall"],
+        "semantic_open_question_recall": open_question_semantic["recall"],
+        "semantic_open_question_f1": open_question_semantic["f1"],
         "follow_up_question_coverage": fu_metrics["recall"],
+        "semantic_follow_up_question_coverage": follow_up_semantic["recall"],
+        "semantic_follow_up_question_f1": follow_up_semantic["f1"],
         "hallucination_rate": hallucination_rate,
+        "exact_hallucination_rate": exact_hallucination_rate,
+        **requirement_quality_metrics,
         "schema_json_parse_validity_rate": parse_rate,
         "schema_pydantic_validity_rate": validation_rate,
         "schema_validity_rate": full_schema_rate,
@@ -289,6 +624,8 @@ def compute_metrics(
         "retry_success_rate": retry_success_rate,
         "retry_recovery_rate": retry_recovery_rate,
         "fallback_rescue_rate": fallback_rescue_rate,
+        "repair_trigger_rate": repair_trigger_rate,
+        "repair_success_rate": repair_success_rate,
         "final_usable_output_rate": usable_output_rate,
         "semantic_warning_rate": semantic_warning_rate,
         "avg_stage_retry_count": (
@@ -307,6 +644,8 @@ def compute_metrics(
         "stage_failure_counts": stage_failure_counts,
         "constraint_semantic_warning_count": constraint_warning_count,
         "avg_latency_sec": avg_latency,
+        "latency_seconds": avg_latency,
+        "num_llm_calls": mean(num_llm_calls_values) if num_llm_calls_values else 0.0,
         "functional_f1_normalized": fr_norm["f1"],
         "non_functional_f1_normalized": nfr_norm["f1"],
         "constraint_f1_normalized": con_norm["f1"],
@@ -353,7 +692,7 @@ def _write_sample_debug_artifacts(sample_debug_dir: Path, run: Any) -> None:
         "semantic_warnings": list(getattr(run, "semantic_warnings", []) or []),
         "error_message": getattr(run, "error_message", None),
         "stage_stats": getattr(run, "stage_stats", {}),
-        "pipeline_mode": getattr(run, "pipeline_mode", "chain"),
+        "pipeline_mode": getattr(run, "pipeline_mode", "single_shot"),
         "robustness_profile": getattr(run, "robustness_profile", None),
         "latency_sec": float(getattr(run, "latency_sec", 0.0)),
     }
@@ -404,6 +743,15 @@ def evaluate_model(
             if run.success:
                 predicted_specs[sid] = run.spec
                 write_json_file(predictions_dir / f"{sid}_pred.json", model_dump_compat(run.spec))
+                if getattr(run, "verification_report", None):
+                    write_json_file(
+                        predictions_dir / f"{sid}_verification_report.json",
+                        run.verification_report,
+                    )
+                    write_text_file(
+                        predictions_dir / f"{sid}_verification_report.md",
+                        format_verification_report_markdown(run.verification_report),
+                    )
             else:
                 write_text_file(
                     predictions_dir / f"{sid}_error.txt",
@@ -426,7 +774,7 @@ def evaluate_model(
                 success=bool(run.success),
                 json_parse_ok=bool(run.json_parse_ok),
                 pydantic_validation_ok=bool(run.pydantic_validation_ok),
-                latency_sec=float(run.latency_sec) if run.success else 0.0,
+                latency_sec=float(run.latency_sec),
                 final_status=str(run.status),
                 retry_count=int(run.retry_count),
                 retry_success=bool(run.success and run.retry_count > 0),
@@ -450,10 +798,10 @@ def evaluate_model(
                     "stage_failure": run.stage_failure,
                     "stage_stats": stage_stats,
                     "semantic_warning": semantic_warning,
-                    "latency_sec": float(run.latency_sec) if run.success else 0.0,
+                    "latency_sec": float(run.latency_sec),
                     "json_parse_ok": bool(run.json_parse_ok),
                     "pydantic_validation_ok": bool(run.pydantic_validation_ok),
-                    "pipeline_mode": getattr(run, "pipeline_mode", "chain"),
+                    "pipeline_mode": getattr(run, "pipeline_mode", "single_shot"),
                     "robustness_profile": getattr(run, "robustness_profile", None),
                     "error": run.error_message,
                 }
@@ -463,7 +811,7 @@ def evaluate_model(
                 total_samples=len(samples),
                 sample_id=sid,
                 status=str(run.status),
-                latency_sec=float(run.latency_sec) if run.success else 0.0,
+                latency_sec=float(run.latency_sec),
             )
         except Exception as exc:
             statuses[sid] = SampleStatus(
@@ -499,7 +847,7 @@ def evaluate_model(
                     "latency_sec": 0.0,
                     "json_parse_ok": False,
                     "pydantic_validation_ok": False,
-                    "pipeline_mode": getattr(pipeline, "pipeline_mode", "chain"),
+                    "pipeline_mode": getattr(pipeline, "pipeline_mode", "single_shot"),
                     "robustness_profile": getattr(pipeline, "robustness_profile", None),
                     "error": str(exc),
                 }
@@ -529,16 +877,50 @@ def evaluate_model(
 
 
 def build_comparison_table(results: dict[str, dict[str, Any]]) -> str:
-    header = (
-        "| model | functional_f1 | non_functional_f1 | constraint_f1 | macro_f1 | "
-        "open_question_recall | follow_up_coverage | hallucination_rate | "
-        "schema_validity_rate | json_parse_success | pydantic_success | "
-        "retry_success | retry_recovery | fallback_rescue | usable_output | semantic_warning | "
-        "stage1_candidates | stage2_discard_rate | stage4_open_questions | stage5_follow_ups | avg_latency_sec |\n"
-    )
-    divider = (
-        "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n"
-    )
+    columns = [
+        "model",
+        "functional_f1",
+        "semantic_functional_f1",
+        "non_functional_f1",
+        "semantic_non_functional_f1",
+        "constraint_f1",
+        "semantic_constraint_f1",
+        "macro_f1",
+        "semantic_req_macro_f1",
+        "open_question_recall",
+        "semantic_open_question_recall",
+        "follow_up_coverage",
+        "semantic_follow_up_coverage",
+        "hallucination_rate",
+        "requirement_count",
+        "acceptance_criteria_coverage",
+        "evidence_span_coverage",
+        "source_relevance_avg",
+        "groundedness_rate",
+        "unsupported_requirement_rate",
+        "verification_pass_rate",
+        "traceability_coverage",
+        "quality_gate_pass_rate",
+        "high_ambiguity_rate",
+        "schema_validity_rate",
+        "json_parse_success",
+        "pydantic_success",
+        "retry_success",
+        "retry_recovery",
+        "fallback_rescue",
+        "repair_trigger_rate",
+        "repair_success_rate",
+        "usable_output",
+        "semantic_warning",
+        "stage1_candidates",
+        "stage2_discard_rate",
+        "stage4_open_questions",
+        "stage5_follow_ups",
+        "num_llm_calls",
+        "avg_latency_sec",
+    ]
+    header = "| " + " | ".join(columns) + " |\n"
+    divider = "|" + "|".join(["---", *["---:"] * (len(columns) - 1)]) + "|\n"
     rows: list[str] = []
     for model_label, report in results.items():
         metrics = report.get("metrics", {})
@@ -548,24 +930,43 @@ def build_comparison_table(results: dict[str, dict[str, Any]]) -> str:
                 [
                     model_label,
                     _format_metric(metrics.get('functional_f1', 0.0)),
+                    _format_metric(metrics.get('semantic_functional_f1', 0.0)),
                     _format_metric(metrics.get('non_functional_f1', 0.0)),
+                    _format_metric(metrics.get('semantic_non_functional_f1', 0.0)),
                     _format_metric(metrics.get('constraint_f1', 0.0)),
+                    _format_metric(metrics.get('semantic_constraint_f1', 0.0)),
                     _format_metric(metrics.get('requirement_type_macro_f1', 0.0)),
+                    _format_metric(metrics.get('semantic_requirement_macro_f1', 0.0)),
                     _format_metric(metrics.get('open_question_recall', 0.0)),
+                    _format_metric(metrics.get('semantic_open_question_recall', 0.0)),
                     _format_metric(metrics.get('follow_up_question_coverage', 0.0)),
+                    _format_metric(metrics.get('semantic_follow_up_question_coverage', 0.0)),
                     _format_metric(metrics.get('hallucination_rate', 0.0)),
+                    _format_metric(metrics.get('requirement_count', 0.0)),
+                    _format_metric(metrics.get('acceptance_criteria_coverage', 0.0)),
+                    _format_metric(metrics.get('evidence_span_coverage', 0.0)),
+                    _format_metric(metrics.get('source_relevance_avg', 0.0)),
+                    _format_metric(metrics.get('groundedness_rate', 0.0)),
+                    _format_metric(metrics.get('unsupported_requirement_rate', 0.0)),
+                    _format_metric(metrics.get('verification_pass_rate', 0.0)),
+                    _format_metric(metrics.get('traceability_coverage', 0.0)),
+                    _format_metric(metrics.get('quality_gate_pass_rate', 0.0)),
+                    _format_metric(metrics.get('high_ambiguity_rate', 0.0)),
                     _format_metric(metrics.get('schema_validity_rate', 0.0)),
                     _format_metric(metrics.get('json_parse_success_rate', 0.0)),
                     _format_metric(metrics.get('pydantic_validation_success_rate', 0.0)),
                     _format_metric(metrics.get('retry_success_rate', 0.0)),
                     _format_metric(metrics.get('retry_recovery_rate', 0.0)),
                     _format_metric(metrics.get('fallback_rescue_rate', 0.0)),
+                    _format_metric(metrics.get('repair_trigger_rate', 0.0)),
+                    _format_metric(metrics.get('repair_success_rate', 0.0)),
                     _format_metric(metrics.get('final_usable_output_rate', 0.0)),
                     _format_metric(metrics.get('semantic_warning_rate', 0.0)),
                     _format_metric(metrics.get('avg_stage_1_candidate_count', 0.0)),
                     _format_metric(metrics.get('avg_stage_2_discard_rate', 0.0)),
                     _format_metric(metrics.get('avg_stage_4_open_question_count', metrics.get('avg_stage_4_follow_up_count', 0.0))),
                     _format_metric(metrics.get('avg_stage_5_follow_up_count', metrics.get('avg_stage_4_follow_up_count', 0.0))),
+                    _format_metric(metrics.get('num_llm_calls', 0.0)),
                     _format_metric(metrics.get('avg_latency_sec', 0.0)),
                 ]
             )

@@ -1,13 +1,20 @@
 from pathlib import Path
 
 from app.evaluation import build_comparison_table, compute_metrics, evaluate_model
-from app.model_runner import MockModelRunner
 from app.pipeline import ConversationToSpecPipeline
 from app.prompt_builder import load_prompt_config
-from app.schemas import ConstraintItem, ConversationUnit, RequirementItem, SpecOutput
+from app.schemas import (
+    ConstraintItem,
+    ConversationUnit,
+    RequirementItem,
+    RequirementQualityChecks,
+    RequirementVerification,
+    SpecOutput,
+)
+from tests.fakes import FakeSingleShotRunner
 
 
-def test_compute_metrics_includes_chain_robustness_keys():
+def test_compute_metrics_includes_single_shot_quality_keys():
     samples = [
         {
             "id": "s1",
@@ -30,6 +37,23 @@ def test_compute_metrics_includes_chain_robustness_keys():
                     id="FR1",
                     text="The system shall provide booking.",
                     source_units=["U1"],
+                    evidence_spans=["Need booking."],
+                    acceptance_criteria=[
+                        "Given booking is in scope, When a user books, Then the booking is saved."
+                    ],
+                    quality_checks=RequirementQualityChecks(
+                        is_atomic=True,
+                        is_testable=True,
+                        has_clear_actor=True,
+                        has_traceable_evidence=True,
+                        ambiguity_risk="low",
+                    ),
+                    verification=RequirementVerification(
+                        source_relevance_score=0.9,
+                        verdict="SUPPORTED",
+                        confidence=0.9,
+                        warnings=[],
+                    ),
                 )
             ],
             non_functional_requirements=[],
@@ -38,6 +62,23 @@ def test_compute_metrics_includes_chain_robustness_keys():
                     id="CON1",
                     text="Online payment shall not be included in v1.",
                     source_units=["U1"],
+                    evidence_spans=["Need booking."],
+                    acceptance_criteria=[
+                        "Given v1 scope is reviewed, When payment scope is checked, Then online payment is excluded."
+                    ],
+                    quality_checks=RequirementQualityChecks(
+                        is_atomic=True,
+                        is_testable=True,
+                        has_clear_actor=True,
+                        has_traceable_evidence=True,
+                        ambiguity_risk="low",
+                    ),
+                    verification=RequirementVerification(
+                        source_relevance_score=0.8,
+                        verdict="SUPPORTED",
+                        confidence=0.8,
+                        warnings=[],
+                    ),
                 )
             ],
             open_questions=[],
@@ -76,7 +117,12 @@ def test_compute_metrics_includes_chain_robustness_keys():
     }
     metrics = compute_metrics(samples, predicted, statuses)
     assert metrics["functional_f1"] == 1.0
+    assert metrics["semantic_functional_f1"] == 1.0
     assert metrics["constraint_f1"] == 1.0
+    assert metrics["semantic_constraint_f1"] == 1.0
+    assert "semantic_open_question_recall" in metrics
+    assert "semantic_follow_up_question_coverage" in metrics
+    assert "semantic_requirement_macro_f1" in metrics
     assert "json_parse_success_rate" in metrics
     assert "pydantic_validation_success_rate" in metrics
     assert "retry_success_rate" in metrics
@@ -88,6 +134,19 @@ def test_compute_metrics_includes_chain_robustness_keys():
     assert "avg_stage_2_discard_rate" in metrics
     assert "avg_stage_4_open_question_count" in metrics
     assert "avg_stage_5_follow_up_count" in metrics
+    assert metrics["acceptance_criteria_coverage"] == 1.0
+    assert metrics["evidence_span_coverage"] == 1.0
+    assert metrics["traceability_coverage"] == 1.0
+    assert metrics["quality_gate_pass_rate"] == 1.0
+    assert metrics["high_ambiguity_rate"] == 0.0
+    assert metrics["requirement_count"] == 2.0
+    assert metrics["source_relevance_avg"] == 0.8500000000000001
+    assert metrics["groundedness_rate"] == 1.0
+    assert metrics["unsupported_requirement_rate"] == 0.0
+    assert metrics["verification_pass_rate"] == 1.0
+    assert "repair_trigger_rate" in metrics
+    assert "repair_success_rate" in metrics
+    assert "num_llm_calls" in metrics
     assert "stage_failure_counts" in metrics
     assert "constraint_semantic_warning_count" in metrics
     assert metrics["avg_stage_4_open_question_count"] == 2.0
@@ -141,15 +200,24 @@ def test_compute_metrics_accepts_legacy_stage_key_fallback():
 def test_comparison_table_uses_new_stage_diagnostic_columns():
     table = build_comparison_table(
         {
-            "mock": {
+            "fake": {
                 "metrics": {
                     "functional_f1": 1.0,
+                    "semantic_functional_f1": 1.0,
                     "non_functional_f1": 0.5,
+                    "semantic_non_functional_f1": 0.5,
                     "constraint_f1": 0.25,
+                    "semantic_constraint_f1": 0.25,
                     "requirement_type_macro_f1": 0.75,
+                    "semantic_requirement_macro_f1": 0.6,
                     "open_question_recall": 0.1,
                     "follow_up_question_coverage": 0.2,
                     "hallucination_rate": 0.3,
+                    "acceptance_criteria_coverage": 0.31,
+                    "evidence_span_coverage": 0.32,
+                    "traceability_coverage": 0.33,
+                    "quality_gate_pass_rate": 0.34,
+                    "high_ambiguity_rate": 0.35,
                     "schema_validity_rate": 0.4,
                     "json_parse_success_rate": 0.5,
                     "pydantic_validation_success_rate": 0.6,
@@ -169,8 +237,13 @@ def test_comparison_table_uses_new_stage_diagnostic_columns():
     )
     assert "stage4_open_questions" in table
     assert "stage5_follow_ups" in table
+    assert "semantic_req_macro_f1" in table
     assert "retry_recovery" in table
     assert "fallback_rescue" in table
+    assert "acceptance_criteria_coverage" in table
+    assert "quality_gate_pass_rate" in table
+    assert "0.3100" in table
+    assert "0.3400" in table
     assert "1.3000" in table
     assert "1.4000" in table
 
@@ -219,16 +292,17 @@ def test_evaluate_model_writes_debug_and_prediction_artifacts(tmp_path: Path):
         }
     ]
     pipeline = ConversationToSpecPipeline(
-        runner=MockModelRunner(),
+        runner=FakeSingleShotRunner(),
         prompt_config=load_prompt_config(),
         generation_config={},
+        verify_mode="heuristic",
     )
     report = evaluate_model(
-        model_label="mock",
+        model_label="fake",
         pipeline=pipeline,
         samples=samples,
         output_dir=tmp_path,
-        run_metadata={"pipeline_mode": "chain", "ablation_profile": "FullChain"},
+        run_metadata={"pipeline_mode": "single_shot"},
     )
     assert "metrics" in report
     assert (tmp_path / "metrics.json").exists()

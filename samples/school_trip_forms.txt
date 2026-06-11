@@ -1,0 +1,10 @@
+Our middle school needs an online tool for field trip permission forms.
+Parents should submit consent forms with student name, class, emergency contact, and allergy notes.
+Teachers need a dashboard to review submitted forms and mark students as approved or missing information.
+The system should send reminder emails to parents who have not submitted a form.
+Only teachers and authorized office staff should access student health notes.
+Parents will mostly use phones, so the form should be readable and easy to complete on mobile.
+We need the first version ready before the spring museum trip.
+Online payment for trip fees might be added next semester, but not in this release.
+The principal wants the form to feel clear and reassuring.
+We are still deciding whether signatures should be typed electronically or uploaded as a photo.

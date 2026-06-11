@@ -1,0 +1,8 @@
+City planning wants a small permit intake portal because applicants currently email forms, photos, and drawings to several staff members, which makes it hard to know which submission is the official one.
+Applicants should be able to start one permit application, upload site plans, contractor license files, and signed owner consent forms, but the first release only needs to check that required documents are present, not whether the documents are legally valid.
+Permit clerks need a queue where they can filter applications by neighborhood, permit type, and missing-document status, and they also want to leave internal notes that applicants cannot see.
+When an application is missing required information, the system should notify the applicant and let them replace only the missing files instead of resubmitting the entire application.
+The director said the portal should feel simple for residents who are not technical, but nobody has defined what simple means or whether mobile use is required.
+The finance department may later connect fee payments and refunds to the city's accounting system, but that integration should not block the first launch.
+For audit reasons, staff should be able to see who changed an application status and when, although detailed legal audit exports can wait until phase two.
+The pilot must be ready before the September council meeting, and the city would prefer not to buy a separate document management product unless it is absolutely necessary.

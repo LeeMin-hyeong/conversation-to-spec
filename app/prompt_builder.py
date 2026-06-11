@@ -23,448 +23,93 @@ def _dump_json(value: Any) -> str:
     return json.dumps(value, indent=2, ensure_ascii=False)
 
 
-def _stage_text(prompt_config: dict, key: str, default_text: str) -> str:
-    stage_prompts = prompt_config.get("stage_prompts", {})
-    if isinstance(stage_prompts, dict):
-        text = str(stage_prompts.get(key, "")).strip()
-        if text:
-            return text
-    return default_text
-
-
-def build_stage_1_candidate_extraction_prompt(
-    conversation_units: Iterable[ConversationUnit], prompt_config: dict
-) -> str:
-    instructions = _stage_text(
-        prompt_config,
-        "stage_1_candidate_extraction",
-        (
-            "Extract candidate ideas from conversation units with high recall. "
-            "Do not finalize requirement categories yet, and include possible constraints."
-        ),
-    )
-    schema_hint = {
-        "candidates": [
-            {
-                "id": "C1",
-                "kind": "possible_requirement",
-                "text": "short candidate description",
-                "source_units": ["U1"],
-            },
-            {
-                "id": "C2",
-                "kind": "possible_constraint",
-                "text": "explicit boundary or release limitation",
-                "source_units": ["U2"],
-            }
-        ]
-    }
+def _single_shot_instructions(prompt_config: dict) -> str:
+    text = str(prompt_config.get("single_shot_instructions", "")).strip()
+    if text:
+        return text
     return (
-        "CHAIN_STAGE:1_CANDIDATE_EXTRACTION\n"
-        "You are a requirements analysis assistant.\n"
-        f"{instructions}\n\n"
-        "Rules:\n"
-        "- Conversation may be unlabeled.\n"
-        "- Be permissive and recall-oriented.\n"
-        "- Do not invent unsupported content.\n"
-        "- Return JSON only.\n"
-        "- Every candidate must include source_units.\n\n"
-        f"Required JSON schema:\n{_dump_json(schema_hint)}\n\n"
-        "Conversation units:\n"
-        f"{_unit_block(conversation_units)}\n\n"
-        "Output JSON only."
-    )
-
-
-def build_stage_2_candidate_classification_prompt(
-    conversation_units: Iterable[ConversationUnit],
-    candidates: list[dict[str, Any]],
-    prompt_config: dict,
-) -> str:
-    instructions = _stage_text(
-        prompt_config,
-        "stage_2_candidate_classification",
-        (
-            "Classify candidates into functional/non-functional/constraint/open question/"
-            "follow-up trigger/note/discard with semantic judgment."
-        ),
-    )
-    schema_hint = {
-        "classified_candidates": [
-            {
-                "id": "C1",
-                "final_type": "functional_requirement",
-                "reason": "brief explanation",
-                "source_units": ["U1"],
-            }
-        ]
-    }
-    return (
-        "CHAIN_STAGE:2_CANDIDATE_CLASSIFICATION\n"
-        "You are a software requirements classification assistant.\n"
-        f"{instructions}\n\n"
-        "Allowed final_type values:\n"
-        "- functional_requirement\n"
-        "- non_functional_requirement\n"
-        "- constraint\n"
-        "- open_question\n"
-        "- follow_up_trigger\n"
-        "- note\n"
-        "- discard\n\n"
-        "Rules:\n"
-        "- Do not force vague/future items into finalized requirements.\n"
-        "- Use constraint for explicit boundaries, exclusions, and implementation limits.\n"
-        "- Preserve source_units.\n"
-        "- Return JSON only.\n\n"
-        f"Required JSON schema:\n{_dump_json(schema_hint)}\n\n"
-        "Conversation units:\n"
-        f"{_unit_block(conversation_units)}\n\n"
-        "Candidates JSON:\n"
-        f"{_dump_json({'candidates': candidates})}\n\n"
-        "Output JSON only."
-    )
-
-
-def build_stage_3_requirement_rewriting_prompt(
-    conversation_units: Iterable[ConversationUnit],
-    classified_candidates: list[dict[str, Any]],
-    prompt_config: dict,
-) -> str:
-    instructions = _stage_text(
-        prompt_config,
-        "stage_3_requirement_rewriting",
-        (
-            "Rewrite functional, non-functional, and constraint items into clear "
-            "specification-style English without hallucination."
-        ),
-    )
-    schema_hint = {
-        "rewritten_items": [
-            {
-                "id": "R1",
-                "type": "functional_requirement",
-                "text": "The system shall ...",
-                "source_units": ["U1"],
-            },
-            {
-                "id": "R2",
-                "type": "constraint",
-                "text": "Online payment shall not be included in the initial release.",
-                "source_units": ["U2"],
-            }
-        ]
-    }
-    return (
-        "CHAIN_STAGE:3_REQUIREMENT_REWRITING\n"
-        "You are a software specification drafting assistant.\n"
-        f"{instructions}\n\n"
-        "Rules:\n"
-        "- Rewrite only items classified as functional_requirement, non_functional_requirement, or constraint.\n"
-        "- Preserve source_units exactly.\n"
-        "- Keep wording concise and implementation-usable.\n"
-        "- Do not invent unsupported details.\n"
-        "- Return JSON only.\n\n"
-        f"Required JSON schema:\n{_dump_json(schema_hint)}\n\n"
-        "Conversation units:\n"
-        f"{_unit_block(conversation_units)}\n\n"
-        "Classified candidates JSON:\n"
-        f"{_dump_json({'classified_candidates': classified_candidates})}\n\n"
-        "Output JSON only."
-    )
-
-
-def build_stage_4_open_question_generation_prompt(
-    conversation_units: Iterable[ConversationUnit],
-    classified_candidates: list[dict[str, Any]],
-    rewritten_items: list[dict[str, Any]],
-    prompt_config: dict,
-) -> str:
-    instructions = _stage_text(
-        prompt_config,
-        "stage_4_open_question_generation",
-        (
-            "Generate unresolved open questions grounded in ambiguities, unclear constraints, "
-            "and missing requirement details."
-        ),
-    )
-    schema_hint = {
-        "open_questions": [
-            {
-                "text": "Could you clarify what 'clean and modern' means with concrete acceptance criteria?",
-                "source_units": ["U3"],
-            }
-        ]
-    }
-    return (
-        "CHAIN_STAGE:4_OPEN_QUESTION_GENERATION\n"
-        "You are an open-question generation assistant.\n"
-        f"{instructions}\n\n"
-        "Rules:\n"
-        "- Generate only unresolved open questions.\n"
-        "- Each question must be specific and end with '?'.\n"
-        "- Tie each question to source_units.\n"
-        "- Return JSON only.\n\n"
-        f"Required JSON schema:\n{_dump_json(schema_hint)}\n\n"
-        "Conversation units:\n"
-        f"{_unit_block(conversation_units)}\n\n"
-        "Classified candidates JSON:\n"
-        f"{_dump_json({'classified_candidates': classified_candidates})}\n\n"
-        "Rewritten items JSON:\n"
-        f"{_dump_json({'rewritten_items': rewritten_items})}\n\n"
-        "Output JSON only."
-    )
-
-
-def build_stage_5_followup_generation_prompt(
-    conversation_units: Iterable[ConversationUnit],
-    classified_candidates: list[dict[str, Any]],
-    rewritten_items: list[dict[str, Any]],
-    open_questions: list[dict[str, Any]],
-    prompt_config: dict,
-) -> str:
-    instructions = _stage_text(
-        prompt_config,
-        "stage_5_followup_generation",
-        (
-            "Generate actionable developer-facing follow-up questions that move the project "
-            "toward implementation decisions."
-        ),
-    )
-    schema_hint = {
-        "follow_up_questions": [
-            {
-                "text": "What measurable acceptance criteria should define the first release?",
-                "source_units": ["U2"],
-            }
-        ]
-    }
-    return (
-        "CHAIN_STAGE:5_FOLLOWUP_GENERATION\n"
-        "You are a developer-facing follow-up assistant.\n"
-        f"{instructions}\n\n"
-        "Rules:\n"
-        "- Questions must be actionable and specific.\n"
-        "- Avoid generic filler questions.\n"
-        "- Tie each question to source_units.\n"
-        "- Return JSON only.\n\n"
-        f"Required JSON schema:\n{_dump_json(schema_hint)}\n\n"
-        "Conversation units:\n"
-        f"{_unit_block(conversation_units)}\n\n"
-        "Classified candidates JSON:\n"
-        f"{_dump_json({'classified_candidates': classified_candidates})}\n\n"
-        "Rewritten items JSON:\n"
-        f"{_dump_json({'rewritten_items': rewritten_items})}\n\n"
-        "Open questions JSON:\n"
-        f"{_dump_json({'open_questions': open_questions})}\n\n"
-        "Output JSON only."
-    )
-
-
-def build_stage_6_summary_prompt(
-    conversation_units: Iterable[ConversationUnit],
-    rewritten_items: list[dict[str, Any]],
-    open_questions: list[dict[str, Any]],
-    notes: list[dict[str, Any]],
-    prompt_config: dict,
-) -> str:
-    instructions = _stage_text(
-        prompt_config,
-        "stage_6_project_summary",
-        (
-            "Write a faithful 2-4 sentence project summary from the extracted requirements "
-            "and unresolved points."
-        ),
-    )
-    schema_hint = {"project_summary": "2-4 sentence summary"}
-    return (
-        "CHAIN_STAGE:6_PROJECT_SUMMARY\n"
-        "You are a software project summarization assistant.\n"
-        f"{instructions}\n\n"
-        "Rules:\n"
-        "- Keep summary to 2-4 sentences.\n"
-        "- Do not invent unsupported scope.\n"
-        "- Mention future/optional scope only as future or uncertain.\n"
-        "- Return JSON only.\n\n"
-        f"Required JSON schema:\n{_dump_json(schema_hint)}\n\n"
-        "Conversation units:\n"
-        f"{_unit_block(conversation_units)}\n\n"
-        "Rewritten items JSON:\n"
-        f"{_dump_json({'rewritten_items': rewritten_items})}\n\n"
-        "Open questions JSON:\n"
-        f"{_dump_json({'open_questions': open_questions})}\n\n"
-        "Notes JSON:\n"
-        f"{_dump_json({'notes': notes})}\n\n"
-        "Output JSON only."
+        "Convert the conversation into a structured software specification draft in one pass. "
+        "Classify functional requirements, non-functional requirements, constraints, "
+        "open questions, follow-up questions, and notes."
     )
 
 
 def build_single_shot_spec_prompt(
-    conversation_units: Iterable[ConversationUnit], prompt_config: dict
+    conversation_units: Iterable[ConversationUnit],
+    prompt_config: dict,
+    prompt_style: str = "few_shot",
 ) -> str:
-    instructions = _stage_text(
-        prompt_config,
-        "single_shot_spec_generation",
-        (
-            "Convert the conversation into a complete structured software specification draft. "
-            "Classify functional requirements, non-functional requirements, constraints, "
-            "open questions, follow-up questions, and notes in one pass."
-        ),
-    )
+    if prompt_style not in {"zero_shot", "few_shot"}:
+        raise ValueError("prompt_style must be 'zero_shot' or 'few_shot'.")
+
     schema_hint = {
         "project_summary": "2-4 sentence summary",
-        "functional_requirements": [
+        "source_unit_decisions": [
             {
-                "id": "FR1",
-                "text": "The system shall ...",
-                "source_units": ["U1"],
+                "source_unit": "U1",
+                "decision": "functional_requirement",
+                "claim": "short source-backed clause for this one atomic decision",
             }
         ],
-        "non_functional_requirements": [
-            {
-                "id": "NFR1",
-                "text": "The system should ...",
-                "source_units": ["U2"],
-            }
-        ],
-        "constraints": [
-            {
-                "id": "CON1",
-                "text": "Initial-release boundary or implementation limitation.",
-                "source_units": ["U3"],
-            }
-        ],
-        "open_questions": [
-            {
-                "text": "Specific unresolved ambiguity?",
-                "source_units": ["U4"],
-            }
-        ],
-        "follow_up_questions": [
-            {
-                "text": "Specific developer question for the client?",
-                "source_units": ["U4"],
-            }
-        ],
-        "notes": [
-            {
-                "text": "Future or contextual note that is not a current hard requirement.",
-                "source_units": ["U5"],
-            }
-        ],
-        "verification_warnings": [],
     }
+
+    few_shot_block = ""
+    if prompt_style == "few_shot":
+        few_shot_block = (
+            "Few-shot example for MAPPING ONLY, not answer text.\n"
+            "Example input:\n"
+            "U_EX1 | EX_ACTOR_A should EX_ACTION_A EX_OBJECT_A.\n"
+            "U_EX2 | EX_ACTOR_B should EX_ACTION_B EX_OBJECT_B, but EX_FUTURE_FEATURE_A can wait until EX_PHASE_A.\n"
+            "U_EX3 | EX_SURFACE_A should EX_QUALITY_A for EX_CONDITION_A.\n"
+            "Expected mapping pattern:\n"
+            "{\n"
+            '  "project_summary": "EX_PROJECT_SUMMARY",\n'
+            '  "source_unit_decisions": [\n'
+            '    {"source_unit": "U_EX1", "decision": "functional_requirement", "claim": "EX_ACTOR_A should EX_ACTION_A EX_OBJECT_A"},\n'
+            '    {"source_unit": "U_EX2", "decision": "functional_requirement", "claim": "EX_ACTOR_B should EX_ACTION_B EX_OBJECT_B"},\n'
+            '    {"source_unit": "U_EX2", "decision": "constraint", "claim": "EX_FUTURE_FEATURE_A can wait until EX_PHASE_A"},\n'
+            '    {"source_unit": "U_EX3", "decision": "open_question", "claim": "EX_QUALITY_A is not measurable"}\n'
+            "  ]\n"
+            "}\n"
+            "Mapping notes:\n"
+            "- Use non_functional_requirement for concrete quality attributes only.\n"
+            "- Use open_question for vague quality wording such as undefined simple/easy/fast.\n"
+            "- The final JSON must use the real U1/U2/... units below, not U_EX* IDs or EX_* words.\n\n"
+        )
+
     return (
-        "SINGLE_SHOT_SPEC_GENERATION\n"
+        "SINGLE_SHOT_TRACEABLE_SPEC\n"
+        "/no_think\n"
         "You are a requirements analysis assistant.\n"
-        f"{instructions}\n\n"
+        f"{_single_shot_instructions(prompt_config)}\n\n"
         "Rules:\n"
-        "- Conversation may be unlabeled.\n"
-        "- Do not invent unsupported content.\n"
-        "- Do not convert vague or future-scope statements into hard requirements.\n"
-        "- Use non_functional_requirements only for quality attributes such as performance, usability, security, reliability, accessibility, or responsiveness.\n"
-        "- Every item except project_summary must include source_units grounded in the provided conversation unit IDs.\n"
-        "- Return JSON only. Do not include markdown fences or explanation.\n\n"
+        "- Return exactly one valid JSON object. No markdown, no prose, no comments.\n"
+        "- Do not output <think>, </think>, reasoning, analysis, or explanations.\n"
+        "- Do not invent unsupported content, source unit IDs, evidence, or acceptance criteria.\n"
+        "- The few-shot example is format-only; never copy its sentinel tokens, source IDs, terms, or requirement text.\n"
+        "- Never output EX_* tokens, U_EX IDs, placeholder text, or schema words such as array<string>.\n"
+        "- Each source_unit_decisions item is one atomic decision row.\n"
+        "- Do not output nested arrays inside source_unit_decisions.\n"
+        "- Do not output an atomic_decisions field.\n"
+        "- If a source unit contains multiple intents, repeat the same source_unit in multiple rows.\n"
+        "- Split combined statements when they contain a feature plus a release limit, a current requirement plus a future-phase item, a feature plus an unresolved question, or a deadline plus a procurement/scope constraint.\n"
+        "- Allowed decision values: functional_requirement, non_functional_requirement, constraint, open_question, note, discard.\n"
+        "- For functional_requirement, non_functional_requirement, and constraint, claim must be non-empty and copied or lightly paraphrased from the source unit.\n"
+        "- For open_question, claim must name the unresolved or vague decision.\n"
+        "- Classify user/system actions such as upload, notify, replace, filter, leave notes, see status, create, update, or submit as functional_requirement.\n"
+        "- Use non_functional_requirement only for quality attributes such as performance, usability, security, reliability, accessibility, or mobile support.\n"
+        "- Do not classify project background or a general product name as a non_functional_requirement.\n"
+        "- Use constraint for release boundaries, deferred features, scope exclusions, deadlines, budgets, or platform limits.\n"
+        "- Use open_question for vague style/usability/performance/security wording that needs a measurable target.\n"
+        "- Use note for project context that is not independently testable.\n"
+        "- Each atomic_decision claim should be short, atomic, and copied from the source meaning; leave it empty if unsure.\n"
+        "- Do not generate final functional_requirements, non_functional_requirements, constraints, evidence_spans, acceptance_criteria, quality_checks, or verification.\n"
+        "- Do not add numeric thresholds such as seconds, percentages, limits, or counts unless the same value appears in a source unit.\n"
+        "- Keep the JSON compact.\n\n"
+        f"{few_shot_block}"
         f"Required JSON schema:\n{_dump_json(schema_hint)}\n\n"
         "Conversation units:\n"
         f"{_unit_block(conversation_units)}\n\n"
         "Output JSON only."
-    )
-
-
-# Backward-compatible prompt helpers for old stage numbering.
-def build_stage_4_followup_generation_prompt(
-    conversation_units: Iterable[ConversationUnit],
-    classified_candidates: list[dict[str, Any]],
-    rewritten_items: list[dict[str, Any]],
-    prompt_config: dict,
-) -> str:
-    return build_stage_5_followup_generation_prompt(
-        conversation_units,
-        classified_candidates,
-        rewritten_items,
-        [],
-        prompt_config,
-    )
-
-
-def build_stage_5_summary_prompt(
-    conversation_units: Iterable[ConversationUnit],
-    rewritten_items: list[dict[str, Any]],
-    open_questions: list[dict[str, Any]],
-    notes: list[dict[str, Any]],
-    prompt_config: dict,
-) -> str:
-    return build_stage_6_summary_prompt(
-        conversation_units,
-        rewritten_items,
-        open_questions,
-        notes,
-        prompt_config,
-    )
-
-
-def build_stage_retry_prompt(
-    *,
-    stage_name: str,
-    error_message: str,
-    previous_output: str,
-    required_schema: dict[str, Any],
-    original_context: str,
-) -> str:
-    trimmed_prev = previous_output.strip()
-    if len(trimmed_prev) > 5000:
-        trimmed_prev = trimmed_prev[:5000] + "\n...[truncated]"
-
-    trimmed_context = original_context.strip()
-    if len(trimmed_context) > 12000:
-        trimmed_context = trimmed_context[:12000] + "\n...[truncated]"
-
-    return (
-        f"CHAIN_STAGE:{stage_name}_RETRY\n"
-        "You are correcting a previously invalid structured output.\n"
-        "Return corrected JSON only.\n"
-        "Do not include markdown fences.\n"
-        "Do not include explanation outside JSON.\n\n"
-        f"Validation error:\n{error_message}\n\n"
-        "Previous invalid output:\n"
-        f"{trimmed_prev}\n\n"
-        "Required schema:\n"
-        f"{_dump_json(required_schema)}\n\n"
-        "Original stage context:\n"
-        f"{trimmed_context}\n\n"
-        "Output corrected JSON only."
-    )
-
-
-# Backward-compatible prompt helpers kept for existing external callers.
-def build_extraction_prompt(
-    conversation_units: Iterable[ConversationUnit], prompt_config: dict
-) -> str:
-    return build_stage_1_candidate_extraction_prompt(conversation_units, prompt_config)
-
-
-def build_retry_prompt(
-    *,
-    previous_output: str,
-    error_message: str,
-    conversation_units: Iterable[ConversationUnit],
-    prompt_config: dict,
-) -> str:
-    stage_prompt = build_stage_1_candidate_extraction_prompt(conversation_units, prompt_config)
-    schema_hint = {
-        "candidates": [
-            {
-                "id": "C1",
-                "kind": "possible_requirement",
-                "text": "short candidate description",
-                "source_units": ["U1"],
-            }
-        ]
-    }
-    return build_stage_retry_prompt(
-        stage_name="1_CANDIDATE_EXTRACTION",
-        error_message=error_message,
-        previous_output=previous_output,
-        required_schema=schema_hint,
-        original_context=stage_prompt,
+        "\n/no_think"
     )

@@ -11,7 +11,7 @@ class _RetryingAutoTokenizer:
 
     def from_pretrained(self, model_name: str, **kwargs):
         self.calls.append((model_name, kwargs))
-        if not kwargs:
+        if "extra_special_tokens" not in kwargs:
             raise AttributeError("'list' object has no attribute 'keys'")
         return _DummyTokenizer()
 
@@ -24,6 +24,9 @@ def test_hf_model_runner_retries_tokenizer_load_with_empty_extra_special_tokens(
 
     assert isinstance(tokenizer, _DummyTokenizer)
     assert auto_tokenizer.calls == [
-        ("google/gemma-4-E2B-it", {}),
-        ("google/gemma-4-E2B-it", {"extra_special_tokens": {}}),
+        ("google/gemma-4-E2B-it", {"trust_remote_code": True}),
+        (
+            "google/gemma-4-E2B-it",
+            {"extra_special_tokens": {}, "trust_remote_code": True},
+        ),
     ]
