@@ -455,7 +455,6 @@ class ConversationToSpecPipeline:
                 self.progress_reporter.pipeline_finished(status=run.status, elapsed_sec=run.latency_sec)
                 return run
             info = self.runner.last_generation_info or {}
-            latency_sec = time.perf_counter() - started
             prompt_tokens = info.get("prompt_tokens")
             completion_tokens = info.get("completion_tokens")
 
@@ -572,6 +571,7 @@ class ConversationToSpecPipeline:
                     "error_message": error_message,
                 }
             ]
+            latency_sec = time.perf_counter() - started
             run = PipelineRunResult(
                 spec=spec,
                 raw_output=raw_output,
