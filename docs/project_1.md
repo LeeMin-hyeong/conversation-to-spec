@@ -108,9 +108,9 @@ Table 1 summarizes the fresh April 24 rerun of the current chain pipeline on the
 | Phi-3.5 Mini | 0.8333 | 0.8333 | 0.0000 | 0.5600 | 1.0000 | 0.2727 | 1238.5673 | Reconstructed from 5 completed prediction artifacts plus 1 timeout failure. |
 | Gemma 3 1B | 0.5000 | 0.5000 | 0.0800 | 0.6087 | 0.9000 | 0.0000 | 523.5316 |  |
 
-![Figure 1. Current pipeline model comparison with semantic FR](assets/model_screening_overview.png)
+![Figure 1. Current pipeline model comparison with semantic FR](assets/project_1/model_screening_overview.png)
 
-![Figure 2. Model comparison: semantic FR F1 versus usable output rate](assets/model_semantic_vs_usable.png)
+![Figure 2. Model comparison: semantic FR F1 versus usable output rate](assets/project_1/model_semantic_vs_usable.png)
 
 The rerun shows that exact-match scoring understated how much requirement meaning some models preserved. Under semantic rescoring, `Gemma 3` achieved the strongest functional-requirement fidelity among the completed direct reruns (`FR F1 = 0.6087`) and its relaxed hallucination dropped to `0.0000`, meaning every predicted requirement that survived comparison could be grounded to some gold requirement on the same evidence span. `Qwen 3B` remained the strongest operational balance because it combined `1.0000` schema validity, `1.0000` usable output, moderate latency, and a non-trivial semantic FR score of `0.3636`. `Qwen 1.5B` stayed in the middle with weaker usability but reasonable semantic gains. Reconstructed `Phi-3.5 Mini` also showed high semantic recovery (`0.5600`), but its extreme latency and partial-run status make it a weak deployment candidate. `TinyLlama 1.1B` remained unusable under the current chain prompts.
 
@@ -134,7 +134,7 @@ The controlled RQ2 comparison used the same base dataset and the same output sch
 | Chain | 1.0000 | 1.0000 | 0.0909 | 0.3636 | 0.8571 | 0.4286 | 60.5630 |
 | Single-shot | 1.0000 | 1.0000 | 0.0690 | 0.4286 | 0.9545 | 0.4286 | 33.7393 |
 
-![Figure 3. Controlled Qwen 3B chain vs single-shot comparison with semantic FR](assets/rq2_qwen3b.png)
+![Figure 3. Controlled Qwen 3B chain vs single-shot comparison with semantic FR](assets/project_1/rq2_qwen3b.png)
 
 The Qwen 3B rerun changes the RQ2 interpretation again. Here both `chain` and `single-shot` remained structurally valid (`schema = 1.0000`, `usable output = 1.0000`), so the comparison becomes mostly about semantic quality and speed. Under semantic matching, `single-shot` captured more requirement meaning (`FR F1 = 0.4286`) than `chain` (`0.3636`) and ran much faster (`33.7s` vs `60.6s`). Relaxed hallucination was the same for both variants (`0.4286`), but `single-shot` triggered semantic warnings on every sample while the chained variant triggered none. This suggests that with the current best model, the chain no longer wins on headline quality, but it still provides a cleaner review signal and more explicit stage-wise control.
 
@@ -148,9 +148,9 @@ Table 4 reports the four first-pass Qwen 3B ablation variants.
 | NoSemanticVerify | 0.0909 | 1.0000 | 1.0000 | 0.1667 | 0.0000 | N/A | 60.5207 |
 | StrictRaw | 0.0952 | 0.8333 | 0.8333 | 0.0000 | 0.0000 | N/A | 52.9075 |
 
-![Figure 4. Controlled Qwen 3B robustness ablation](assets/rq4_qwen3b.png)
+![Figure 4. Controlled Qwen 3B robustness ablation](assets/project_1/rq4_qwen3b.png)
 
-![Figure 5. Controlled Qwen 3B experiments: chain comparison and robustness usability](assets/qwen_controlled_summary.png)
+![Figure 5. Controlled Qwen 3B experiments: chain comparison and robustness usability](assets/project_1/qwen_controlled_summary.png)
 
 The Qwen 3B ablation yields a narrower but still useful conclusion. `FullChain` reached `1.0000` schema validity and `1.0000` usable output. Removing retry reduced both to `0.8333`, and `StrictRaw` ended at the same level because the only clear failure on this small set was a stage-3 schema error that retry could recover. Disabling semantic verification did not change exact quality or usability, so on this dataset semantic verification behaved mainly as a review-time warning layer rather than a rescue mechanism. In other words, Qwen 3B did not need the full robustness stack to stay mostly operational, but retry still provided a measurable benefit.
 
