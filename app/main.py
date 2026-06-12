@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from app.evaluation import build_comparison_table, evaluate_model, load_eval_dataset
-from app.model_runner import HFModelRunner
+from app.model_runner import HFModelRunner, MLXModelRunner
 from app.pipeline import ConversationToSpecPipeline
 from app.progress import ConsoleProgressReporter
 from app.prompt_builder import load_prompt_config
@@ -19,20 +19,37 @@ MODELS_CONFIG_PATH = Path("configs/models.yaml")
 PROMPTS_CONFIG_PATH = Path("configs/prompts.yaml")
 PROMPT_STYLES = ("zero_shot", "few_shot")
 VERIFY_MODES = ("off", "heuristic", "llm", "minicheck")
+BACKENDS = ("auto", "hf", "mlx")
 PIPELINE_MODE = "single_shot"
 
 
-def _resolve_model_alias(input_name: str, models_config: dict[str, Any]) -> tuple[str, str]:
+def _infer_backend_from_repo_id(repo_id: str) -> str:
+    normalized = repo_id.lower()
+    if "mlx" in normalized or normalized.startswith("mlx-community/"):
+        return "mlx"
+    return "hf"
+
+
+def _model_cfg_repo_id(cfg: dict[str, Any]) -> str:
+    return str(cfg.get("repo_id") or cfg.get("hf_repo_id") or "").strip()
+
+
+def _resolve_model_alias(input_name: str, models_config: dict[str, Any]) -> tuple[str, str, str]:
     models = models_config.get("models", {})
     if input_name in models:
-        return input_name, str(models[input_name]["hf_repo_id"])
+        cfg = models[input_name]
+        repo_id = _model_cfg_repo_id(cfg)
+        backend = str(cfg.get("backend") or _infer_backend_from_repo_id(repo_id)).strip()
+        return input_name, repo_id, backend
 
     for alias, cfg in models.items():
-        if str(cfg.get("hf_repo_id", "")) == input_name:
-            return alias, input_name
+        repo_id = _model_cfg_repo_id(cfg)
+        if repo_id == input_name:
+            backend = str(cfg.get("backend") or _infer_backend_from_repo_id(repo_id)).strip()
+            return alias, input_name, backend
 
     # Direct repository id support.
-    return slugify(input_name), input_name
+    return slugify(input_name), input_name, _infer_backend_from_repo_id(input_name)
 
 
 def _build_pipeline(
@@ -44,12 +61,19 @@ def _build_pipeline(
     prompt_style: str = "few_shot",
     verify_mode: str = "minicheck",
     repair_on_fail: bool = False,
+    backend: str = "auto",
 ) -> tuple[str, ConversationToSpecPipeline]:
     if not model_name:
         raise ValueError("A model name is required.")
 
-    alias, hf_repo_id = _resolve_model_alias(model_name, models_config)
-    runner = HFModelRunner(hf_repo_id)
+    alias, repo_id, configured_backend = _resolve_model_alias(model_name, models_config)
+    resolved_backend = configured_backend if backend == "auto" else backend
+    if resolved_backend == "mlx":
+        runner = MLXModelRunner(repo_id)
+    elif resolved_backend == "hf":
+        runner = HFModelRunner(repo_id)
+    else:
+        raise ValueError("backend must be one of: auto, hf, mlx.")
     return alias, ConversationToSpecPipeline(
         runner=runner,
         prompt_config=prompt_config,
@@ -87,8 +111,15 @@ def _experiment_run_root(args: argparse.Namespace) -> Path:
 def _model_repo_id(model_name: str | None, models_config: dict[str, Any]) -> str | None:
     if not model_name:
         return None
-    _, repo_id = _resolve_model_alias(model_name, models_config)
+    _, repo_id, _ = _resolve_model_alias(model_name, models_config)
     return repo_id
+
+
+def _model_backend(model_name: str | None, models_config: dict[str, Any], backend_override: str = "auto") -> str | None:
+    if not model_name:
+        return None
+    _, _, configured_backend = _resolve_model_alias(model_name, models_config)
+    return configured_backend if backend_override == "auto" else backend_override
 
 
 def _run_metadata(
@@ -108,11 +139,13 @@ def _run_metadata(
         "timestamp": datetime.now().isoformat(timespec="seconds"),
         "pipeline_mode": PIPELINE_MODE,
         "prompt_style": args.prompt_style,
+        "backend": _model_backend(model_name, models_config, args.backend),
+        "backend_input": args.backend,
         "verify_mode": args.verify_mode,
         "repair_on_fail": bool(args.repair_on_fail),
         "model_alias": model_alias,
         "model_input": model_name,
-        "hf_repo_id": _model_repo_id(model_name, models_config),
+        "repo_id": _model_repo_id(model_name, models_config),
         "dataset_path": str(dataset_path) if dataset_path else None,
         "dataset_sha256": _sha256_file(dataset_path) if dataset_path else None,
         "prompt_config_path": str(prompt_path),
@@ -131,6 +164,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--input", type=str, help="Path to input transcript (.txt/.md)")
     parser.add_argument("--output", type=str, default="output", help="Output directory")
     parser.add_argument("--model", type=str, help="Model alias or Hugging Face repo id")
+    parser.add_argument(
+        "--backend",
+        choices=BACKENDS,
+        default="auto",
+        help="Local inference backend. Defaults to the backend configured for the model alias.",
+    )
     parser.add_argument("--evaluate", action="store_true", help="Run evaluation mode")
     parser.add_argument("--dataset", type=str, help="Evaluation dataset path (JSON)")
     parser.add_argument("--all-models", action="store_true", help="Evaluate configured comparison models")
@@ -181,7 +220,7 @@ def _run_single(args: argparse.Namespace, models_config: dict[str, Any], prompt_
         args.model = _default_model(models_config)
 
     generation_config = models_config.get("generation", {})
-    model_alias, _ = _resolve_model_alias(args.model, models_config)
+    model_alias, _, _ = _resolve_model_alias(args.model, models_config)
     run_id = _run_id(args)
     output_dir = ensure_dir(
         Path(args.output) / slugify(f"{run_id}__{model_alias}__{PIPELINE_MODE}")
@@ -197,6 +236,7 @@ def _run_single(args: argparse.Namespace, models_config: dict[str, Any], prompt_
             prompt_style=args.prompt_style,
             verify_mode=args.verify_mode,
             repair_on_fail=bool(args.repair_on_fail),
+            backend=args.backend,
         )
         print(f"Run output directory: {output_dir}")
         run = pipeline.run_file(Path(args.input), output_dir, progress_reporter=reporter)
@@ -281,6 +321,7 @@ def _run_evaluate(
                 prompt_style=args.prompt_style,
                 verify_mode=args.verify_mode,
                 repair_on_fail=bool(args.repair_on_fail),
+                backend=args.backend,
             )
             metadata = _run_metadata(
                 args=args,

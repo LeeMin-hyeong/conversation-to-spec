@@ -66,7 +66,9 @@ def test_pipeline_reports_stage_progress_messages():
     assert run.success is True
     assert "Pipeline started" in output
     assert "Segment conversation completed" in output
+    assert "Prepare model completed" in output
     assert "Generate spec completed" in output
+    assert "Verify and refine completed" in output
 
 
 def test_evaluate_model_reports_sample_progress(tmp_path: Path):

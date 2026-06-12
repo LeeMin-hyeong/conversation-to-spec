@@ -121,6 +121,15 @@ class MiniCheckScorer:
         self._tokenizer = None
         self._model = None
 
+    def _select_device(self) -> str:
+        assert self._torch is not None
+        if self._torch.cuda.is_available():
+            return "cuda"
+        mps_backend = getattr(self._torch.backends, "mps", None)
+        if mps_backend is not None and mps_backend.is_available():
+            return "mps"
+        return "cpu"
+
     def _ensure_loaded(self) -> None:
         if self._model is not None and self._tokenizer is not None:
             return
@@ -135,7 +144,7 @@ class MiniCheckScorer:
         self._torch = torch
         self._tokenizer = AutoTokenizer.from_pretrained(self.model_name)
         self._model = AutoModelForSequenceClassification.from_pretrained(self.model_name)
-        device = "cuda" if torch.cuda.is_available() else "cpu"
+        device = self._select_device()
         self._model.to(device)
         self._model.eval()
 
@@ -603,8 +612,6 @@ def format_verification_report_markdown(report: dict[str, Any]) -> str:
         warnings = ", ".join(entry.get("warnings", [])) or "-"
         evidence = " | ".join(entry.get("evidence_spans", [])) or "-"
         repair = entry.get("repair_status") or "-"
-        score = entry.get("source_relevance_score")
-        score_text = "N/A" if score is None else f"{float(score):.4f}"
         confidence = entry.get("confidence")
         confidence_text = "N/A" if confidence is None else f"{float(confidence):.4f}"
         lines.extend(
@@ -612,7 +619,7 @@ def format_verification_report_markdown(report: dict[str, Any]) -> str:
                 f"- **{entry.get('requirement_id', '')}** ({entry.get('category', '')}): {entry.get('text', '')}",
                 f"  - source_units: {sources}",
                 f"  - evidence: {evidence}",
-                f"  - verdict: {entry.get('verdict', 'NOT_CHECKED')} (score={score_text}, confidence={confidence_text})",
+                f"  - verdict: {entry.get('verdict', 'NOT_CHECKED')} (confidence={confidence_text})",
                 f"  - warnings: {warnings}",
                 f"  - repair: {repair}",
             ]
@@ -1041,7 +1048,7 @@ class SpecVerifier:
         spec: SpecOutput,
         conversation_units: Iterable[ConversationUnit],
         *,
-        verify_mode: str = "heuristic",
+        verify_mode: str = "minicheck",
         repair_on_fail: bool = False,
     ) -> VerificationRunResult:
         units = list(conversation_units)

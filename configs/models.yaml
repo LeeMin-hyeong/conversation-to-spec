@@ -1,10 +1,10 @@
-default_model: qwen3_0.6b
+default_model: qwen2_5_0_5b_hf
 
 compare_models:
-  - qwen_0_5b
-  - qwen3_0_5b
-  - qwen2_5_3b_instruct
-  - qwen3_5_0_8b
+  - qwen2_5_0_5b_hf
+  - qwen2_5_1_5b_hf
+  - qwen2_5_3b_hf
+  - qwen3_4b_hf
 
 generation:
   max_new_tokens: 2048
@@ -14,23 +14,45 @@ generation:
   max_retries: 2
 
 models:
-  qwen3_0.6b:
-    hf_repo_id: Qwen/Qwen3-0.6B
-  qwen3_4b:
-    hf_repo_id: Qwen/Qwen3-4B-Instruct-2507
-  qwen_0_5b:
-    hf_repo_id: Qwen/Qwen2.5-0.5B-Instruct
-  qwen_1_5b:
-    hf_repo_id: Qwen/Qwen2.5-1.5B-Instruct
-  tinyllama_1_1b:
-    hf_repo_id: TinyLlama/TinyLlama-1.1B-Chat-v1.0
-  gemma_3_1b_it:
-    hf_repo_id: google/gemma-3-1b-it
-  qwen2_5_3b_instruct:
-    hf_repo_id: Qwen/Qwen2.5-3B-Instruct
-  mistral_7b_instruct:
-    hf_repo_id: mistralai/Mistral-7B-Instruct-v0.3
-  phi_3_5_mini_instruct:
-    hf_repo_id: microsoft/Phi-3.5-mini-instruct
-  gemma_4_e2b_it:
-    hf_repo_id: google/gemma-4-E2B-it
+  qwen3_0_6b_hf:
+    repo_id: Qwen/Qwen3-0.6B
+    backend: hf
+  qwen3_0_6b_mlx_bf16:
+    repo_id: Qwen/Qwen3-0.6B-MLX-bf16
+    backend: mlx
+  qwen3_0_6b_mlx_4bit:
+    repo_id: Qwen/Qwen3-0.6B-MLX-4bit
+    backend: mlx
+  qwen3_4b_hf:
+    repo_id: Qwen/Qwen3-4B-Instruct-2507
+    backend: hf
+  qwen3_4b_mlx_bf16:
+    repo_id: mlx-community/Qwen3-4B-Instruct-2507-bf16
+    backend: mlx
+  qwen3_4b_mlx_4bit:
+    repo_id: mlx-community/Qwen3-4B-Instruct-2507-4bit
+    backend: mlx
+  qwen2_5_0_5b_hf:
+    repo_id: Qwen/Qwen2.5-0.5B-Instruct
+    backend: hf
+  qwen2_5_1_5b_hf:
+    repo_id: Qwen/Qwen2.5-1.5B-Instruct
+    backend: hf
+  tinyllama_1_1b_hf:
+    repo_id: TinyLlama/TinyLlama-1.1B-Chat-v1.0
+    backend: hf
+  gemma_3_1b_it_hf:
+    repo_id: google/gemma-3-1b-it
+    backend: hf
+  qwen2_5_3b_hf:
+    repo_id: Qwen/Qwen2.5-3B-Instruct
+    backend: hf
+  mistral_7b_hf:
+    repo_id: mistralai/Mistral-7B-Instruct-v0.3
+    backend: hf
+  phi_3_5_mini_hf:
+    repo_id: microsoft/Phi-3.5-mini-instruct
+    backend: hf
+  gemma_4_e2b_it_hf:
+    repo_id: google/gemma-4-E2B-it
+    backend: hf

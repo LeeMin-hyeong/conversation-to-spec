@@ -75,6 +75,22 @@ Thanks.
     assert meta.json_parse_ok is True
 
 
+def test_extractor_repairs_truncated_json_object_with_open_array():
+    raw = """{
+  "project_summary": "Summary.",
+  "source_unit_decisions": [
+    {"source_unit": "U1", "decision": "functional_requirement", "claim": ""}
+}"""
+    spec, meta = extract_spec_output_safe(
+        raw,
+        [ConversationUnit(id="U1", text="Nurses should report broken equipment.")],
+    )
+    assert spec is not None
+    assert meta.used_repair is True
+    assert meta.pydantic_validation_ok is True
+    assert spec.functional_requirements
+
+
 def test_extractor_strips_qwen_thinking_before_json_parse():
     raw = """
 <think>
@@ -207,6 +223,84 @@ def test_source_unit_decision_schema_normalizes_explicit_launch_exclusion():
     assert spec.constraints[0].text == "Online rent payment shall be excluded from the launch scope."
     assert not any("included in the first release or deferred" in q.text for q in spec.open_questions)
     assert any("Should residents create accounts or use invite links?" == q.text for q in spec.open_questions)
+
+
+def test_source_unit_decision_schema_normalizes_first_release_exclusion_with_future_addition():
+    units = [
+        ConversationUnit(
+            id="U1",
+            text="Online payment is not needed for the first release, but we may add it later.",
+        ),
+    ]
+    raw = json.dumps(
+        {
+            "project_summary": "Workshop portal.",
+            "source_unit_decisions": [
+                {"source_unit": "U1", "decision": "constraint"},
+            ],
+        }
+    )
+
+    spec, meta = extract_spec_output_safe(raw, units)
+
+    assert meta.pydantic_validation_ok is True
+    assert len(spec.constraints) == 1
+    assert spec.constraints[0].text == (
+        "Online payment shall be excluded from the first-release scope "
+        "and may be considered for a future release."
+    )
+
+
+def test_source_unit_decision_schema_promotes_privacy_prohibition_to_nfr():
+    units = [
+        ConversationUnit(
+            id="U1",
+            text="Please do not expose children's birth dates or contact information to other parents.",
+        ),
+    ]
+    raw = json.dumps(
+        {
+            "project_summary": "Workshop portal.",
+            "source_unit_decisions": [
+                {"source_unit": "U1", "decision": "note"},
+            ],
+        }
+    )
+
+    spec, meta = extract_spec_output_safe(raw, units)
+
+    assert meta.pydantic_validation_ok is True
+    assert not spec.notes
+    assert len(spec.non_functional_requirements) == 1
+    assert "shall not expose children's birth dates or contact information" in (
+        spec.non_functional_requirements[0].text.lower()
+    )
+
+
+def test_source_unit_decision_schema_splits_multi_action_staff_requirement():
+    units = [
+        ConversationUnit(
+            id="U1",
+            text="Staff should be able to add workshops, update seat counts, and close registration when a class is full.",
+        ),
+    ]
+    raw = json.dumps(
+        {
+            "project_summary": "Workshop portal.",
+            "source_unit_decisions": [
+                {"source_unit": "U1", "decision": "functional_requirement", "claim": ""},
+            ],
+        }
+    )
+
+    spec, meta = extract_spec_output_safe(raw, units)
+
+    assert meta.pydantic_validation_ok is True
+    assert len(spec.functional_requirements) == 3
+    texts = [item.text.lower() for item in spec.functional_requirements]
+    assert any("staff to add workshops" in text for text in texts)
+    assert any("staff to update seat counts" in text for text in texts)
+    assert any("staff to close registration when a class is full" in text for text in texts)
 
 
 def test_source_unit_decision_schema_accepts_multiple_atomic_decisions():

@@ -1,0 +1,12 @@
+We are planning a web app for a small community clinic.
+What should receptionists be able to do first?
+They need to create appointment slots with a date, time, doctor, department, and maximum patient count.
+What should patients do with those slots?
+Patients should browse available appointment slots and reserve one open slot.
+Receptionists also need to confirm or cancel patient reservations.
+After confirmation, they should be able to see a daily appointment list for each doctor.
+We must not collect national ID numbers, full credit card numbers, or unrelated medical history.
+Do online payments need to be included in the first release?
+No, the first release does not need online payments. We may add them later.
+Most patients will use phones, so the reservation flow should be easy on mobile screens.
+For launch, a basic CSV export of confirmed daily appointments is enough.

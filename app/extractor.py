@@ -406,10 +406,13 @@ def lightweight_repair_json(raw_text: str) -> str:
 
     brace_diff = repaired.count("{") - repaired.count("}")
     bracket_diff = repaired.count("[") - repaired.count("]")
+    if bracket_diff > 0 and brace_diff == 0 and repaired.rstrip().endswith("}"):
+        repaired = repaired.rstrip()
+        repaired = repaired[:-1] + ("]" * bracket_diff) + "}"
+    elif bracket_diff > 0:
+        repaired = repaired + ("]" * bracket_diff)
     if brace_diff > 0:
         repaired = repaired + ("}" * brace_diff)
-    if bracket_diff > 0:
-        repaired = repaired + ("]" * bracket_diff)
     return repaired.strip()
 
 
@@ -1210,6 +1213,44 @@ def _should_keep_vague_quality_as_nfr(text: str) -> bool:
     return "first year" in text_lc or "first-year" in text_lc
 
 
+def _is_privacy_or_security_prohibition_text(text: str) -> bool:
+    text_lc = normalize_text(text)
+    has_prohibition = any(
+        phrase in text_lc
+        for phrase in (
+            "do not expose",
+            "not expose",
+            "do not reveal",
+            "not reveal",
+            "do not display",
+            "not display",
+            "do not show",
+            "not show",
+            "must not expose",
+            "must not reveal",
+            "must not display",
+            "must not show",
+        )
+    )
+    has_sensitive_data = any(
+        phrase in text_lc
+        for phrase in (
+            "birth date",
+            "birth dates",
+            "contact information",
+            "phone number",
+            "email address",
+            "personal information",
+            "private information",
+            "health notes",
+            "student health",
+            "children",
+            "child",
+        )
+    )
+    return has_prohibition and has_sensitive_data
+
+
 def _looks_like_capability_statement(text: str) -> bool:
     text_lc = normalize_text(text)
     return any(hint in text_lc for hint in CAPABILITY_HINTS)
@@ -1614,6 +1655,14 @@ def _append_question_once(
 
 def _future_scope_feature_from_text(text: str) -> str:
     feature = text.strip().rstrip(".")
+    exclusion_then_future_match = re.match(
+        r"(?P<feature>.+?)\s+is\s+not\s+(needed|required)\s+for\s+(the\s+)?first\s+release,\s+"
+        r"but\s+(we\s+)?(may|might|could|can)\s+add\s+(it\s+)?later$",
+        feature,
+        flags=re.IGNORECASE,
+    )
+    if exclusion_then_future_match:
+        return exclusion_then_future_match.group("feature").strip(" .")
     feature = re.sub(
         r"\s*,?\s*but\s+(it\s+is\s+|it\s+should\s+)?not\s+"
         r"((needed|required)\s+for\s+(launch|the\s+launch|first\s+release|the\s+first\s+release)|"
@@ -2085,6 +2134,17 @@ def _fallback_requirement_text_from_source(text: str, category: str) -> str:
 
     if category == "non_functional_requirement":
         cleaned_lc = normalize_text(cleaned)
+        if _is_privacy_or_security_prohibition_text(cleaned_lc):
+            data_match = re.search(
+                r"(?:expose|reveal|display|show)\s+(?P<data>.+?)\s+to\s+(?P<audience>.+)$",
+                cleaned,
+                flags=re.IGNORECASE,
+            )
+            if data_match:
+                protected_data = data_match.group("data").strip(" .")
+                audience = data_match.group("audience").strip(" .")
+                return f"The system shall not expose {protected_data} to {audience}."
+            return "The system shall protect sensitive personal information from unauthorized disclosure."
         if "tablet" in cleaned_lc:
             if "dashboard" in cleaned_lc:
                 return "The staff dashboard shall support tablet screen usage."
@@ -2119,14 +2179,34 @@ def _fallback_requirement_text_from_source(text: str, category: str) -> str:
         )
         if re.match(r"^the system shall\b", quality_clause, flags=re.IGNORECASE):
             return quality_clause[:1].upper() + quality_clause[1:].rstrip(".") + "."
-        return f"The system shall satisfy this quality expectation: {cleaned}."
+        return f"The system shall satisfy this quality requirement: {cleaned}."
 
-    return f"The system shall support this capability: {cleaned}."
+    csv_match = re.search(r"\bbasic\s+csv\s+export\s+of\s+(?P<object>.+?)\s+is\s+enough", cleaned, flags=re.IGNORECASE)
+    if csv_match:
+        return f"The system shall provide a basic CSV export of {csv_match.group('object').strip(' .')}."
+    actor_match = re.match(
+        r"(?P<actor>.+?)\s+(?:should|must|shall|need(?:s)?\s+to|should\s+be\s+able\s+to|must\s+be\s+able\s+to)\s+(?P<action>.+)$",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+    if actor_match:
+        actor = actor_match.group("actor").strip(" .")
+        action = actor_match.group("action").strip(" .")
+        return f"{actor[:1].upper() + actor[1:]} shall {action}."
+    return f"The system shall provide: {cleaned}."
 
 
 def _fallback_constraint_text_from_source(text: str) -> str:
     cleaned = text.strip().rstrip(".")
     normalized = normalize_text(cleaned)
+    no_first_release_match = re.search(
+        r"(?:no,\s*)?(?:the\s+)?first\s+release\s+does\s+not\s+need\s+(?P<feature>.+?)(?:\.\s*we\s+may\s+add\s+them\s+later)?$",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+    if no_first_release_match:
+        feature = no_first_release_match.group("feature").strip(" .")
+        return f"{feature[:1].upper() + feature[1:]} shall be deferred beyond the first release."
     avoid_purchase_match = re.search(
         r"(?:prefer\s+)?not\s+to\s+buy\s+(?P<product>.+?)(?:\s+unless\s+(?P<condition>.+))?$",
         cleaned,
@@ -2191,6 +2271,11 @@ def _fallback_constraint_text_from_source(text: str) -> str:
     ):
         feature = _future_scope_feature_from_text(cleaned)
         scope = "first-release scope" if "release" in normalized else "launch scope"
+        if re.search(r"\bbut\b.+\b(may|might|could|can)\s+add\b.+\blater\b", cleaned, flags=re.IGNORECASE):
+            return (
+                f"{feature[:1].upper() + feature[1:]} shall be excluded from the {scope} "
+                "and may be considered for a future release."
+            )
         return f"{feature[:1].upper() + feature[1:]} shall be excluded from the {scope}."
     deferred_match = re.match(
         r"(?P<feature>.+?)\s+(?:can|could|may|might|is planned to|will)?\s*"
@@ -2313,6 +2398,9 @@ def _append_missing_source_unit_coverage(
         for item in [*verified_fr, *verified_nfr, *verified_constraints]
         for source_id in item.source_units
     }
+    covered_requirement_sources.update(
+        source_id for item in open_questions for source_id in item.source_units
+    )
     note_sources = {source_id for item in notes for source_id in item.source_units}
 
     for unit in conversation_units:
@@ -2372,6 +2460,16 @@ def _append_missing_source_unit_coverage(
         future_scope_like = _looks_like_future_scope_text(text)
         constraint_like = _looks_like_constraint_text(text)
         vague_quality = _is_vague_quality_text(text)
+
+        if _is_uncertainty_text(text):
+            open_questions.append(
+                QuestionItem(
+                    text=text.rstrip("?") + "?",
+                    source_units=[unit.id],
+                )
+            )
+            warnings.append(f"source_units:{unit.id} coverage_fallback_recorded_open_question")
+            continue
 
         if future_scope_like and not constraint_like:
             verified_constraints.append(
@@ -2493,6 +2591,10 @@ def semantic_verify(
             candidate_fr.append(item)
 
     for item in spec_output.non_functional_requirements:
+        item_source_text = " ".join(unit_map.get(sid, "") for sid in item.source_units)
+        if _is_privacy_or_security_prohibition_text(item.text) or _is_privacy_or_security_prohibition_text(item_source_text):
+            candidate_nfr.append(item)
+            continue
         adjusted_type, clarification = coerce_rewrite_type_for_quality(
             item.text,
             "non_functional_requirement",
@@ -2672,7 +2774,7 @@ def semantic_verify(
                 )
         else:
             source_text = _source_text_for_ids(sources, unit_map) or item.text
-            if _is_uncertainty_text(source_text):
+            if _is_uncertainty_text(source_text) or source_text.strip().endswith("?"):
                 _add_uncertainty_questions(
                     text=source_text,
                     source_units=sources,
@@ -2772,6 +2874,13 @@ def semantic_verify(
             item.text, item.source_units, "constraints", item.evidence_spans
         )
         if action == "keep":
+            source_text = _source_text_for_ids(sources, unit_map) or item.text
+            if _is_uncertainty_text(source_text):
+                open_questions.append(
+                    QuestionItem(text=source_text.rstrip("?") + "?", source_units=sources)
+                )
+                warnings.append(f"raw_constraints:{item.id} reclassified_as_open_question")
+                continue
             item_payload = model_dump_compat(item)
             item_payload["source_units"] = sources
             verified_constraints.append(
@@ -2831,6 +2940,59 @@ def semantic_verify(
         notes=notes,
         warnings=warnings,
     )
+
+    kept_fr: list[RequirementItem] = []
+    for item in verified_fr:
+        source_text = " ".join(unit_map.get(sid, "") for sid in item.source_units)
+        privacy_text = f"{item.text} {source_text}"
+        privacy_lc = normalize_text(privacy_text)
+        if _is_privacy_or_security_prohibition_text(privacy_text) or (
+            "not store" in privacy_lc
+            and any(term in privacy_lc for term in ("national id", "resident registration", "payment card", "card details"))
+        ):
+            verified_nfr.append(item)
+            warnings.append(f"functional_requirements:{item.id} reclassified_as_non_functional_privacy")
+        else:
+            kept_fr.append(item)
+    verified_fr = kept_fr
+    kept_constraints: list[ConstraintItem] = []
+    for item in verified_constraints:
+        source_text = _source_text_for_ids(item.source_units, unit_map) or item.text
+        if item.text.strip().endswith("?") or source_text.strip().endswith("?"):
+            open_questions.append(
+                QuestionItem(text=source_text.rstrip("?") + "?", source_units=item.source_units)
+            )
+            warnings.append(f"constraints:{item.id} reclassified_as_open_question")
+        else:
+            kept_constraints.append(item)
+    verified_constraints = kept_constraints
+
+    covered_sources = {
+        source_id
+        for item in [*verified_fr, *verified_nfr, *verified_constraints]
+        for source_id in item.source_units
+    }
+    answered_questions: set[tuple[str, ...]] = set()
+    for question in open_questions:
+        if len(question.source_units) != 1:
+            continue
+        source_id = question.source_units[0]
+        source_text = unit_map.get(source_id, "")
+        if not source_text.strip().endswith("?"):
+            continue
+        match = re.match(r"U(?P<num>\d+)$", source_id)
+        if not match:
+            continue
+        current = int(match.group("num"))
+        if any(f"U{idx}" in covered_sources for idx in range(current + 1, current + 3)):
+            answered_questions.add(tuple(question.source_units))
+    if answered_questions:
+        open_questions = [
+            question
+            for question in open_questions
+            if tuple(question.source_units) not in answered_questions
+        ]
+        warnings.append(f"open_questions:answered_by_following_source_units:{len(answered_questions)}")
 
     payload = model_dump_compat(spec_output)
     verified_fr = _dedupe_requirement_items(verified_fr)
@@ -2980,6 +3142,27 @@ def _split_atomic_decision_clauses(text: str) -> list[str]:
         flags=re.IGNORECASE,
     ):
         return [cleaned]
+    if re.search(
+        r"\bnot\s+(needed|required)\s+for\s+(the\s+)?first\s+release\b.+\bbut\b.+\b(may|might|could|can)\s+add\b.+\blater\b",
+        cleaned,
+        flags=re.IGNORECASE,
+    ):
+        return [cleaned]
+
+    multi_action_match = re.match(
+        r"(?P<actor>staff|parents|users|customers|managers|teachers|students|residents|applicants)\s+"
+        r"(?:should|must|shall)\s+be\s+able\s+to\s+"
+        r"(?P<first>[^,]+),\s+(?P<second>[^,]+),\s+and\s+(?P<third>.+)$",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+    if multi_action_match:
+        actor = multi_action_match.group("actor")
+        return [
+            f"{actor} should be able to {multi_action_match.group('first').strip()}",
+            f"{actor} should be able to {multi_action_match.group('second').strip()}",
+            f"{actor} should be able to {multi_action_match.group('third').strip()}",
+        ]
 
     protected = cleaned
     protected = re.sub(r"\s*,?\s+but\s+", " || but ", protected, flags=re.IGNORECASE)
@@ -3011,6 +3194,8 @@ def _split_atomic_decision_clauses(text: str) -> list[str]:
 def _normalize_source_unit_decision(decision: str, source_text: str) -> str:
     text = normalize_text(str(decision or ""))
     source_lc = normalize_text(source_text)
+    if _is_privacy_or_security_prohibition_text(source_lc):
+        return "non_functional_requirement"
     if _is_project_intro_text(source_lc):
         return "note"
     if _is_uncertainty_text(source_lc):

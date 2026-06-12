@@ -1,8 +1,13 @@
 from __future__ import annotations
 
 import random
+import os
+import sys
+import tempfile
 import time
+import warnings
 from abc import ABC, abstractmethod
+from contextlib import contextmanager
 from typing import Any
 
 
@@ -15,8 +20,185 @@ class BaseModelRunner(ABC):
     def generate(self, prompt: str, generation_config: dict) -> str:
         raise NotImplementedError
 
+    def prepare(self) -> None:
+        return None
+
     def close(self) -> None:
         return None
+
+
+class MLXModelRunner(BaseModelRunner):
+    """Local MLX runner for Apple Silicon text-generation models."""
+
+    def __init__(self, model_name: str) -> None:
+        super().__init__(model_name=model_name)
+        self._mx = None
+        self._model = None
+        self._tokenizer = None
+        self._generate = None
+        self._make_sampler = None
+        self._last_generation_args: dict[str, Any] = {}
+
+    @staticmethod
+    @contextmanager
+    def _filter_mlx_stderr():
+        stderr_fd = sys.stderr.fileno()
+        saved_fd = os.dup(stderr_fd)
+        with tempfile.TemporaryFile(mode="w+b") as tmp:
+            try:
+                os.dup2(tmp.fileno(), stderr_fd)
+                yield
+            finally:
+                os.dup2(saved_fd, stderr_fd)
+                os.close(saved_fd)
+                tmp.seek(0)
+                captured = tmp.read().decode(errors="replace")
+                for line in captured.splitlines():
+                    if "mx.metal.device_info is deprecated" in line:
+                        continue
+                    print(line, file=sys.stderr)
+
+    def _ensure_loaded(self) -> None:
+        if (
+            self._model is not None
+            and self._tokenizer is not None
+            and self._generate is not None
+            and self._make_sampler is not None
+        ):
+            return
+        try:
+            import mlx.core as mx  # type: ignore
+            from mlx_lm import generate, load  # type: ignore
+            from mlx_lm.sample_utils import make_sampler  # type: ignore
+        except Exception as exc:  # pragma: no cover - depends on optional runtime env
+            raise RuntimeError("mlx-lm is required for MLXModelRunner.") from exc
+        self._mx = mx
+        with warnings.catch_warnings():
+            warnings.filterwarnings(
+                "ignore",
+                message=r".*mx\.metal\.device_info is deprecated.*",
+            )
+            self._model, self._tokenizer = load(self.model_name)
+        self._generate = generate
+        self._make_sampler = make_sampler
+
+    def prepare(self) -> None:
+        self._ensure_loaded()
+
+    def _prompt_text(self, prompt: str) -> str:
+        assert self._tokenizer is not None
+        tokenizer = getattr(self._tokenizer, "tokenizer", self._tokenizer)
+        apply_chat_template = getattr(tokenizer, "apply_chat_template", None)
+        if apply_chat_template is None:
+            return prompt
+        try:
+            return apply_chat_template(
+                [{"role": "user", "content": prompt}],
+                tokenize=False,
+                add_generation_prompt=True,
+                enable_thinking=False,
+            )
+        except Exception:
+            try:
+                return apply_chat_template(
+                    [{"role": "user", "content": prompt}],
+                    tokenize=False,
+                    add_generation_prompt=True,
+                )
+            except Exception:
+                return prompt
+
+    def _prompt_token_count(self, prompt_text: str) -> int | None:
+        assert self._tokenizer is not None
+        try:
+            return len(self._tokenizer.encode(prompt_text))
+        except Exception:
+            return None
+
+    def _generation_args(self, generation_config: dict) -> dict[str, Any]:
+        assert self._make_sampler is not None
+        temperature = float(generation_config.get("temperature", 0.0))
+        do_sample = bool(generation_config.get("do_sample", False))
+        if temperature <= 0 or not do_sample:
+            temperature = 0.0
+            top_p = 0.0
+        else:
+            top_p = float(generation_config.get("top_p", 1.0))
+        args: dict[str, Any] = {
+            "max_tokens": int(generation_config.get("max_new_tokens", 900)),
+            "sampler": self._make_sampler(temp=temperature, top_p=top_p),
+        }
+        self._last_generation_args = {
+            "max_tokens": args["max_tokens"],
+            "do_sample": do_sample and temperature > 0,
+            "temperature": temperature,
+            "top_p": top_p,
+        }
+        return args
+
+    def _apply_seed(self, generation_config: dict) -> None:
+        if self._mx is None:
+            return
+        seed = generation_config.get("seed")
+        if seed is None:
+            return
+        try:
+            self._mx.random.seed(int(seed))
+        except Exception:
+            return
+
+    def _stop_at_sequences(self, output: str, generation_config: dict) -> str:
+        stop_sequences = generation_config.get("stop_sequences", [])
+        if not isinstance(stop_sequences, list):
+            return output
+        earliest_cut = None
+        for stop in stop_sequences:
+            if not stop:
+                continue
+            idx = output.find(str(stop))
+            if idx >= 0 and (earliest_cut is None or idx < earliest_cut):
+                earliest_cut = idx
+        if earliest_cut is None:
+            return output
+        return output[:earliest_cut].strip()
+
+    def generate(self, prompt: str, generation_config: dict) -> str:
+        self._ensure_loaded()
+        assert self._generate is not None
+        self._apply_seed(generation_config)
+        prompt_text = self._prompt_text(prompt)
+        prompt_tokens = self._prompt_token_count(prompt_text)
+        started = time.perf_counter()
+        with warnings.catch_warnings():
+            warnings.filterwarnings(
+                "ignore",
+                message=r".*mx\.metal\.device_info is deprecated.*",
+            )
+            with self._filter_mlx_stderr():
+                output = self._generate(
+                    self._model,
+                    self._tokenizer,
+                    prompt_text,
+                    verbose=False,
+                    **self._generation_args(generation_config),
+                ).strip()
+        output = self._stop_at_sequences(output, generation_config)
+        elapsed = time.perf_counter() - started
+        completion_tokens = None
+        try:
+            completion_tokens = len(self._tokenizer.encode(output))
+        except Exception:
+            pass
+        self.last_generation_info = {
+            "model_name": self.model_name,
+            "model_kind": "mlx_lm",
+            "device": "mlx",
+            "latency_sec": elapsed,
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "generation_args": dict(self._last_generation_args),
+        }
+        return output
 
 
 class HFModelRunner(BaseModelRunner):
@@ -46,11 +228,20 @@ class HFModelRunner(BaseModelRunner):
                 trust_remote_code=True,
             )
 
+    def _select_device(self) -> str:
+        assert self._torch is not None
+        if self._torch.cuda.is_available():
+            return "cuda"
+        mps_backend = getattr(self._torch.backends, "mps", None)
+        if mps_backend is not None and mps_backend.is_available():
+            return "mps"
+        return "cpu"
+
     def _model_kwargs(self) -> dict[str, Any]:
         assert self._torch is not None
-        dtype = self._torch.float16 if self._device == "cuda" else self._torch.float32
+        dtype = self._torch.float16 if self._device in {"cuda", "mps"} else self._torch.float32
         model_kwargs: dict[str, Any] = {
-            "torch_dtype": dtype,
+            "dtype": dtype,
             "trust_remote_code": True,
         }
         if self._device == "cuda":
@@ -70,7 +261,7 @@ class HFModelRunner(BaseModelRunner):
             ) from exc
 
         self._torch = torch
-        self._device = "cuda" if torch.cuda.is_available() else "cpu"
+        self._device = self._select_device()
 
         model_kwargs = self._model_kwargs()
         try:
@@ -118,8 +309,8 @@ class HFModelRunner(BaseModelRunner):
                         f"processor image-text error: {vlm_exc}"
                     ) from vlm_exc
 
-        if self._device == "cpu":
-            self._model.to("cpu")
+        if self._device != "cuda":
+            self._model.to(self._device)
 
         if (
             self._tokenizer is not None
@@ -127,6 +318,9 @@ class HFModelRunner(BaseModelRunner):
             and self._tokenizer.eos_token_id is not None
         ):
             self._tokenizer.pad_token = self._tokenizer.eos_token
+
+    def prepare(self) -> None:
+        self._ensure_loaded()
 
     def _apply_seed(self, generation_config: dict) -> None:
         seed = generation_config.get("seed")
@@ -303,6 +497,7 @@ class HFModelRunner(BaseModelRunner):
         self.last_generation_info = {
             "model_name": self.model_name,
             "model_kind": self._model_kind,
+            "device": self._device,
             "latency_sec": elapsed,
             "prompt_tokens": prompt_tokens,
             "completion_tokens": completion_tokens,

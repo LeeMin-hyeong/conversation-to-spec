@@ -9,11 +9,15 @@ from typing import Iterator, TextIO
 
 
 STAGE_0 = "stage_0_segmentation"
+STAGE_MODEL_PREP = "model_preparation"
+STAGE_VERIFICATION = "verification_and_refinement"
 STAGE_FINAL = "final_assembly"
 
 PIPELINE_PROGRESS_SEQUENCE = (
     STAGE_0,
+    STAGE_MODEL_PREP,
     "single_shot_spec_generation",
+    STAGE_VERIFICATION,
 )
 
 PIPELINE_STAGE_LABELS = {
@@ -25,7 +29,9 @@ PIPELINE_STAGE_LABELS = {
     "stage_4_open_question_generation": "Generate open questions",
     "stage_5_followup_generation": "Generate follow-up questions",
     "stage_6_project_summary": "Summarize project",
+    STAGE_MODEL_PREP: "Prepare model",
     "single_shot_spec_generation": "Generate spec",
+    STAGE_VERIFICATION: "Verify and refine",
     STAGE_FINAL: "Assemble final spec",
 }
 
@@ -147,7 +153,7 @@ class _ConsoleAttemptHandle:
 
     def _running_text(self, *, elapsed_sec: int) -> str:
         return (
-            f"{self.reporter._stage_prefix(self.step_index, self.total_steps)} "
+            f"{self.reporter._stage_start_prefix(self.step_index, self.total_steps)} "
             f"{stage_display_name(self.stage_key)} running "
             f"(attempt {self.attempt_index}/{self.max_attempts})... {elapsed_sec}s elapsed"
         )
@@ -159,11 +165,63 @@ class _ConsoleAttemptHandle:
 
         elapsed_sec = time.perf_counter() - self.started_at
         final_text = (
-            f"{self.reporter._stage_prefix(self.step_index, self.total_steps)} "
+            f"{self.reporter._stage_finish_prefix(self.step_index, self.total_steps)} "
             f"{stage_display_name(self.stage_key)} {result_text} "
             f"(attempt {self.attempt_index}/{self.max_attempts}, {elapsed_sec:.1f}s)"
         )
         self.reporter._finalize_attempt(self, final_text)
+
+
+@dataclass
+class _ConsoleStageHandle:
+    reporter: "ConsoleProgressReporter"
+    stage_key: str
+    step_index: int
+    total_steps: int
+    started_at: float = field(default_factory=time.perf_counter)
+    stop_event: threading.Event = field(default_factory=threading.Event)
+    thread: threading.Thread | None = None
+    rendered_inline: bool = False
+
+    def start(self) -> "_ConsoleStageHandle":
+        if not self.reporter.dynamic_updates:
+            return self
+
+        self.thread = threading.Thread(
+            target=self._run,
+            name=f"progress-{self.stage_key}",
+            daemon=True,
+        )
+        self.thread.start()
+        return self
+
+    def _run(self) -> None:
+        while not self.stop_event.wait(self.reporter.heartbeat_interval_sec):
+            elapsed = time.perf_counter() - self.started_at
+            if elapsed < self.reporter.heartbeat_delay_sec:
+                continue
+            self.rendered_inline = True
+            self.reporter._render_inline(
+                self._running_text(elapsed_sec=int(elapsed))
+            )
+
+    def _running_text(self, *, elapsed_sec: int) -> str:
+        return (
+            f"{self.reporter._stage_start_prefix(self.step_index, self.total_steps)} "
+            f"{stage_display_name(self.stage_key)} running... {elapsed_sec}s elapsed"
+        )
+
+    def finish(self, result_text: str) -> None:
+        self.stop_event.set()
+        if self.thread is not None:
+            self.thread.join(timeout=self.reporter.heartbeat_interval_sec * 2 + 0.1)
+
+        elapsed_sec = time.perf_counter() - self.started_at
+        final_text = (
+            f"{self.reporter._stage_finish_prefix(self.step_index, self.total_steps)} "
+            f"{stage_display_name(self.stage_key)} {result_text} ({elapsed_sec:.1f}s)"
+        )
+        self.reporter._finalize_stage(self, final_text)
 
 
 class ConsoleProgressReporter:
@@ -184,6 +242,7 @@ class ConsoleProgressReporter:
         self._lock = threading.Lock()
         self._inline_width = 0
         self._active_attempt: _ConsoleAttemptHandle | None = None
+        self._active_stage: _ConsoleStageHandle | None = None
         self._sample_prefix = ""
 
     def _write_line(self, text: str) -> None:
@@ -215,9 +274,46 @@ class ConsoleProgressReporter:
             if self._active_attempt is handle:
                 self._active_attempt = None
 
-    def _stage_prefix(self, step_index: int, total_steps: int) -> str:
-        percent = int((step_index / max(1, total_steps)) * 100)
+    def _finalize_stage(self, handle: _ConsoleStageHandle, text: str) -> None:
+        with self._lock:
+            if self.dynamic_updates and handle.rendered_inline:
+                width = max(self._inline_width, len(text))
+                self.stream.write("\r" + text.ljust(width) + "\n")
+            else:
+                if self._inline_width:
+                    self.stream.write("\n")
+                self.stream.write(text + "\n")
+            self.stream.flush()
+            self._inline_width = 0
+            if self._active_stage is handle:
+                self._active_stage = None
+
+    def _cancel_active_stage(self, stage_key: str) -> None:
+        handle = self._active_stage
+        if handle is None or handle.stage_key != stage_key:
+            return
+        handle.stop_event.set()
+        if handle.thread is not None:
+            handle.thread.join(timeout=self.heartbeat_interval_sec * 2 + 0.1)
+        self._active_stage = None
+
+    def _progress_prefix(self, step_index: int, total_steps: int, *, completed_steps: int) -> str:
+        percent = int((completed_steps / max(1, total_steps)) * 100)
         return f"{self._sample_prefix}[{step_index}/{total_steps} {percent:>3}%]"
+
+    def _stage_start_prefix(self, step_index: int, total_steps: int) -> str:
+        return self._progress_prefix(
+            step_index,
+            total_steps,
+            completed_steps=max(0, step_index - 1),
+        )
+
+    def _stage_finish_prefix(self, step_index: int, total_steps: int) -> str:
+        return self._progress_prefix(
+            step_index,
+            total_steps,
+            completed_steps=step_index,
+        )
 
     def pipeline_started(self, *, total_steps: int, run_label: str | None = None) -> None:
         label_suffix = f" for {run_label}" if run_label else ""
@@ -229,9 +325,24 @@ class ConsoleProgressReporter:
         )
 
     def stage_started(self, *, stage_key: str, step_index: int, total_steps: int) -> None:
-        self._write_line(
-            f"{self._stage_prefix(step_index, total_steps)} {stage_display_name(stage_key)} started"
+        handle = _ConsoleStageHandle(
+            reporter=self,
+            stage_key=stage_key,
+            step_index=step_index,
+            total_steps=total_steps,
         )
+        if self.dynamic_updates:
+            handle.rendered_inline = True
+            self._render_inline(
+                f"{self._stage_start_prefix(step_index, total_steps)} "
+                f"{stage_display_name(stage_key)} started"
+            )
+        else:
+            self._write_line(
+                f"{self._stage_start_prefix(step_index, total_steps)} "
+                f"{stage_display_name(stage_key)} started"
+            )
+        self._active_stage = handle.start()
 
     def stage_finished(
         self,
@@ -241,8 +352,14 @@ class ConsoleProgressReporter:
         total_steps: int,
         result_text: str,
     ) -> None:
+        if (
+            self._active_stage is not None
+            and self._active_stage.stage_key == stage_key
+        ):
+            self._active_stage.finish(result_text)
+            return
         self._write_line(
-            f"{self._stage_prefix(step_index, total_steps)} "
+            f"{self._stage_finish_prefix(step_index, total_steps)} "
             f"{stage_display_name(stage_key)} {result_text}"
         )
 
@@ -255,6 +372,7 @@ class ConsoleProgressReporter:
         attempt_index: int,
         max_attempts: int,
     ) -> _ConsoleAttemptHandle:
+        self._cancel_active_stage(stage_key)
         handle = _ConsoleAttemptHandle(
             reporter=self,
             stage_key=stage_key,

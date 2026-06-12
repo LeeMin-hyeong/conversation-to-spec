@@ -11,7 +11,15 @@ from app.extractor import ExtractionMeta, extract_spec_output_safe, semantic_ver
 from app.formatter import format_spec_markdown
 from app.model_runner import BaseModelRunner
 from app.parser import load_conversation_text
-from app.progress import NullProgressReporter, STAGE_0
+from app.postprocessor import confidence_aware_postprocess
+from app.progress import (
+    NullProgressReporter,
+    STAGE_0,
+    STAGE_MODEL_PREP,
+    STAGE_VERIFICATION,
+    pipeline_step_index,
+    pipeline_total_steps,
+)
 from app.prompt_builder import build_single_shot_spec_prompt
 from app.quality import ensure_spec_quality_defaults, validate_spec_quality
 from app.schemas import ConversationUnit, SpecOutput
@@ -56,6 +64,7 @@ class PipelineRunResult:
     verification_report_md_path: Optional[Path] = None
     verification_report: dict[str, Any] = field(default_factory=dict)
     num_llm_calls: int = 0
+    generation_info: dict[str, Any] = field(default_factory=dict)
     debug_dir: Optional[Path] = None
 
     @property
@@ -253,8 +262,10 @@ class ConversationToSpecPipeline:
             "semantic_warnings": run.semantic_warnings,
             "error_message": run.error_message,
             "latency_sec": run.latency_sec,
+            "generation_latency_sec": run.generation_info.get("latency_sec"),
             "prompt_tokens": run.prompt_tokens,
             "completion_tokens": run.completion_tokens,
+            "generation_info": run.generation_info,
             "attempt_count": len(run.attempt_logs),
             "stage_retry_counts": run.stage_retry_counts,
             "stage_failure": run.stage_failure,
@@ -277,7 +288,7 @@ class ConversationToSpecPipeline:
         started = time.perf_counter()
         previous_reporter = self.progress_reporter
         self.progress_reporter = progress_reporter or NullProgressReporter()
-        total_steps = 2
+        total_steps = pipeline_total_steps()
         raw_output = ""
         verification_report: dict[str, Any] = {}
         verification_report_md = ""
@@ -329,8 +340,60 @@ class ConversationToSpecPipeline:
                 return run
 
             self.progress_reporter.stage_started(
+                stage_key=STAGE_MODEL_PREP,
+                step_index=pipeline_step_index(STAGE_MODEL_PREP),
+                total_steps=total_steps,
+            )
+            try:
+                self.runner.prepare()
+            except Exception as exc:
+                error_message = str(exc)
+                meta = ExtractionMeta(
+                    json_parse_ok=False,
+                    pydantic_validation_ok=False,
+                    validation_error=error_message,
+                )
+                spec = self._build_fallback_spec(conversation_units, error_message)
+                run = PipelineRunResult(
+                    spec=spec,
+                    raw_output="",
+                    extraction_meta=meta,
+                    latency_sec=time.perf_counter() - started,
+                    prompt_tokens=None,
+                    completion_tokens=None,
+                    success=False,
+                    status=PIPELINE_STATUS_FAILED_INVALID_OUTPUT,
+                    retry_count=0,
+                    error_message=error_message,
+                    stage_failure=STAGE_MODEL_PREP,
+                    stage_stats={"pipeline_mode": "single_shot", "num_llm_calls": 0},
+                    num_llm_calls=0,
+                )
+                self.progress_reporter.stage_finished(
+                    stage_key=STAGE_MODEL_PREP,
+                    step_index=pipeline_step_index(STAGE_MODEL_PREP),
+                    total_steps=total_steps,
+                    result_text=f"failed: {self._short_progress_error(error_message)}",
+                )
+                self._persist_outputs(
+                    run,
+                    output_dir=output_dir,
+                    output_basename=output_basename,
+                    save_markdown=save_markdown,
+                    verification_report_md="",
+                )
+                self.progress_reporter.pipeline_finished(status=run.status, elapsed_sec=run.latency_sec)
+                return run
+            self.progress_reporter.stage_finished(
+                stage_key=STAGE_MODEL_PREP,
+                step_index=pipeline_step_index(STAGE_MODEL_PREP),
+                total_steps=total_steps,
+                result_text="completed",
+            )
+
+            self.progress_reporter.stage_started(
                 stage_key=STAGE_SINGLE_SHOT,
-                step_index=2,
+                step_index=pipeline_step_index(STAGE_SINGLE_SHOT),
                 total_steps=total_steps,
             )
             prompt = build_single_shot_spec_prompt(
@@ -378,7 +441,7 @@ class ConversationToSpecPipeline:
                 )
                 self.progress_reporter.stage_finished(
                     stage_key=STAGE_SINGLE_SHOT,
-                    step_index=2,
+                    step_index=pipeline_step_index(STAGE_SINGLE_SHOT),
                     total_steps=total_steps,
                     result_text=f"failed: {self._short_progress_error(error_message)}",
                 )
@@ -392,7 +455,7 @@ class ConversationToSpecPipeline:
                 self.progress_reporter.pipeline_finished(status=run.status, elapsed_sec=run.latency_sec)
                 return run
             info = self.runner.last_generation_info or {}
-            latency_sec = float(info.get("latency_sec", 0.0)) or (time.perf_counter() - started)
+            latency_sec = time.perf_counter() - started
             prompt_tokens = info.get("prompt_tokens")
             completion_tokens = info.get("completion_tokens")
 
@@ -414,11 +477,22 @@ class ConversationToSpecPipeline:
                 status = PIPELINE_STATUS_FAILED_INVALID_OUTPUT
                 self.progress_reporter.stage_finished(
                     stage_key=STAGE_SINGLE_SHOT,
-                    step_index=2,
+                    step_index=pipeline_step_index(STAGE_SINGLE_SHOT),
                     total_steps=total_steps,
                     result_text=f"failed: {self._short_progress_error(error_message)}",
                 )
             else:
+                self.progress_reporter.stage_finished(
+                    stage_key=STAGE_SINGLE_SHOT,
+                    step_index=pipeline_step_index(STAGE_SINGLE_SHOT),
+                    total_steps=total_steps,
+                    result_text="completed",
+                )
+                self.progress_reporter.stage_started(
+                    stage_key=STAGE_VERIFICATION,
+                    step_index=pipeline_step_index(STAGE_VERIFICATION),
+                    total_steps=total_steps,
+                )
                 if self._semantic_verify_enabled():
                     spec, semantic_warnings = semantic_verify(spec, conversation_units)
                 spec = ensure_spec_quality_defaults(spec, conversation_units)
@@ -430,6 +504,30 @@ class ConversationToSpecPipeline:
                 spec, verification_report, verification_report_md, verifier_warnings, verifier_num_llm_calls = (
                     self._run_spec_verifier(spec, conversation_units)
                 )
+                postprocess_warnings: list[str] = []
+                if self.verify_mode != "off":
+                    postprocess_result = confidence_aware_postprocess(
+                        spec,
+                        conversation_units,
+                        runner=self.runner,
+                        generation_config=self.generation_config,
+                    )
+                    verifier_num_llm_calls += postprocess_result.num_llm_calls
+                    if postprocess_result.warnings:
+                        postprocess_warnings = postprocess_result.warnings
+                        spec = postprocess_result.spec
+                        spec.verification_warnings = sorted(
+                            set(list(spec.verification_warnings) + postprocess_warnings)
+                        )
+                    if postprocess_result.changed:
+                        (
+                            spec,
+                            verification_report,
+                            verification_report_md,
+                            verifier_warnings,
+                            extra_verifier_calls,
+                        ) = self._run_spec_verifier(spec, conversation_units)
+                        verifier_num_llm_calls += extra_verifier_calls
                 verification_report = self._augment_verification_report_calls(
                     verification_report,
                     generator_llm_calls=1,
@@ -440,6 +538,8 @@ class ConversationToSpecPipeline:
                 )
                 if verifier_warnings:
                     semantic_warnings = sorted(set(semantic_warnings + verifier_warnings))
+                if postprocess_warnings:
+                    semantic_warnings = sorted(set(semantic_warnings + postprocess_warnings))
                 meta.semantic_warnings = semantic_warnings
                 if semantic_warnings:
                     status = PIPELINE_STATUS_SEMANTIC_WARNING
@@ -448,8 +548,8 @@ class ConversationToSpecPipeline:
                 else:
                     status = PIPELINE_STATUS_SUCCESS
                 self.progress_reporter.stage_finished(
-                    stage_key=STAGE_SINGLE_SHOT,
-                    step_index=2,
+                    stage_key=STAGE_VERIFICATION,
+                    step_index=pipeline_step_index(STAGE_VERIFICATION),
                     total_steps=total_steps,
                     result_text="completed",
                 )
@@ -491,6 +591,7 @@ class ConversationToSpecPipeline:
                 robustness_profile=self.robustness_profile,
                 verification_report=verification_report,
                 num_llm_calls=stage_stats["num_llm_calls"],
+                generation_info=info,
             )
 
             self._persist_outputs(

@@ -1,0 +1,12 @@
+We want a small web app for a neighborhood repair volunteer group.
+What should coordinators be able to do first?
+They need to create repair events with a date, location, capacity, and required skill tags.
+What should volunteers do with those events?
+Volunteers should browse open repair events and sign up for one available slot.
+Coordinators also need to approve or reject volunteer signups.
+They should be able to see a simple roster for each event after approvals.
+We should not store national ID numbers, resident registration numbers, or payment card details.
+Do automated SMS reminders need to be included in the first release?
+No, the first release does not need automated SMS reminders. We may add them later.
+Most volunteers will use phones, so the signup flow should be easy on mobile screens.
+For launch, a basic CSV export of approved volunteer rosters is enough.

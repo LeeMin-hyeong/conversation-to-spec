@@ -1,114 +1,77 @@
 # Conversation-to-Spec
 
-`conversation-to-spec` converts informal client-developer conversations into
-traceable software requirement drafts. It is a Python NLP course project, not a
-web app.
+`conversation-to-spec` turns an informal, unlabeled conversation into a
+traceable software requirements draft. It is designed as a local NLP course
+project pipeline: an LLM extracts source-grounded decisions, deterministic
+post-processing builds the specification, and MiniCheck verifies whether each
+requirement is supported by the original conversation.
 
-The current `v0.1.1` direction is a verifier-guided few-shot pipeline:
+The main output for users is `spec.md`. Detailed verification data is kept in
+JSON files so the Markdown specification remains readable.
 
-```text
-Conversation
--> source-unit preprocessing
--> few-shot single-shot source-unit decision generation
--> deterministic spec construction
--> quality checks
--> claim-evidence verification
--> selective repair when enabled
--> spec.json / spec.md / verification reports
-```
+## What It Does
 
-This is a lightweight traceability layer. It does not implement full RAG,
-Graph-RAG, or a full reproduction of RAGAS/MiniCheck.
+Given a plain text conversation, the system produces:
 
-## Current Pipeline
+- a project summary
+- functional requirements
+- non-functional requirements
+- constraints
+- open questions and follow-up questions when the conversation is incomplete
+- source-unit references and evidence text for traceability
+- Given/When/Then-style acceptance criteria
 
-```mermaid
-flowchart TD
-    A["Raw transcript"] --> B["Segment into U1, U2, ..."]
-    B --> C["Few-shot single-call generator"]
-    C --> D["source_unit_decisions JSON"]
-    D --> E["Pydantic parsing and repair"]
-    E --> F["Deterministic requirement construction"]
-    F --> G["Evidence spans, acceptance criteria, quality checks"]
-    G --> H["Heuristic or MiniCheck-style verification"]
-    H --> I["Selective repair if enabled"]
-    I --> J["spec.json, spec.md, verification reports"]
-```
+It also writes verification reports that include MiniCheck confidence values and
+warnings for development or report analysis.
 
-The production pipeline is single-shot only. The earlier multi-stage chain mode
-and production `--mock` path were removed because they did not represent the
-real model behavior being evaluated. Tests use lightweight fake runners instead.
+## Recommended Environment
 
-## What The LLM Generates
-
-The LLM does not generate the full final schema. The current prompt asks for:
-
-- a short `project_summary`
-- flat `source_unit_decisions`
-- one or more decision rows per relevant conversation unit
-- optional short source-backed `claim` text for an atomic decision
-
-The prompt explicitly tells the model not to generate final requirements,
-evidence spans, acceptance criteria, quality checks, or verification fields.
-Those fields are filled by deterministic post-processing and the verifier.
-
-This design was chosen because small local models are more reliable when they
-classify and extract short source-grounded decisions than when they must produce
-a large nested specification schema in one pass.
-
-## What It Produces
-
-Each run writes:
-
-- `spec.json`: validated structured specification
-- `spec.md`: readable Markdown specification
-- `verification_report.json`: requirement-level verification results
-- `verification_report.md`: readable verification report
-- `debug/spec/`: raw model output, repaired JSON, warnings, and summary
-
-Each generated requirement or constraint includes:
-
-- `source_units`: referenced conversation unit IDs
-- `evidence_spans`: source-grounded evidence text
-- `acceptance_criteria`: Given/When/Then-style criteria when possible
-- `quality_checks`: atomicity, testability, actor clarity, traceability, ambiguity
-- `verification`: source relevance, verdict, confidence, and warnings
-
-## Default Model
-
-The default model is configured in [configs/models.yaml](configs/models.yaml):
-
-```yaml
-default_model: qwen3_0.6b
-
-models:
-  qwen3_0.6b:
-    hf_repo_id: Qwen/Qwen3-0.6B
-```
-
-The default generation settings use deterministic decoding and a larger token
-budget to reduce truncated JSON:
-
-```yaml
-generation:
-  max_new_tokens: 2048
-  temperature: 0.0
-  do_sample: false
-```
-
-Qwen reasoning output is handled defensively. The prompt requests JSON only and
-`/no_think`, and the parser strips `<think>...</think>` blocks before JSON
-parsing.
-
-## Quick Start
-
-Install dependencies:
+This project runs locally with `uv`.
 
 ```bash
 uv sync
 ```
 
-Run a sample with the default model:
+For Apple Silicon Macs, the recommended generator is the MLX instruct model:
+
+```text
+qwen3_4b_mlx_4bit -> mlx-community/Qwen3-4B-Instruct-2507-4bit
+```
+
+For portable Hugging Face Transformers runs, use:
+
+```text
+qwen2_5_0_5b_hf -> Qwen/Qwen2.5-0.5B-Instruct
+```
+
+Model aliases follow this convention:
+
+- `*_hf`: Hugging Face Transformers backend
+- `*_mlx_4bit`: MLX backend for Apple Silicon
+- `*_mlx_bf16`: non-quantized MLX bf16 backend for Apple Silicon
+
+The backend is selected automatically from the model alias. The configured
+models prefer instruction-tuned repositories because this task depends on
+following schema, classification, and rewriting instructions. On a Mac, prefer
+the MLX command below.
+
+When an instruction-tuned variant is available for the same model family and
+size, the project configuration points to the instruct variant. Non-instruct
+models are kept only as lightweight baselines when no trusted instruct MLX
+variant is available.
+
+## Quick Start
+
+Run on Apple Silicon with the recommended local model:
+
+```bash
+uv run python -m app.main \
+  --input samples/sample_cafe_website.txt \
+  --output output \
+  --model qwen3_4b_mlx_4bit
+```
+
+Run with the portable default model:
 
 ```bash
 uv run python -m app.main \
@@ -116,139 +79,151 @@ uv run python -m app.main \
   --output output
 ```
 
-Run with explicit options:
-
-```bash
-uv run python -m app.main \
-  --input samples/sample_cafe_website.txt \
-  --output output \
-  --model qwen3_0.6b \
-  --prompt-style few_shot \
-  --verify-mode heuristic \
-  --repair-on-fail
-```
-
-Use a direct Hugging Face repository ID:
-
-```bash
-uv run python -m app.main \
-  --input samples/sample_cafe_website.txt \
-  --output output \
-  --model Qwen/Qwen3-0.6B
-```
-
-Single-run outputs are written to timestamped directories:
+Each run creates a directory like:
 
 ```text
-output/YYYYMMDD_HHMMSS__<model>__single_shot/
+output/<run_id>__<model_alias>__single_shot/
 ```
 
-## Verification Modes
+The most important files are:
 
-The CLI supports:
+```text
+spec.md                    # user-facing requirements draft
+spec.json                  # structured specification with detailed fields
+verification_report.md     # readable verification summary
+verification_report.json   # detailed verification data
+debug/spec/summary.json    # run metadata and pipeline statistics
+```
 
-| Mode | Meaning |
-| --- | --- |
-| `off` | Skip requirement verification. |
-| `heuristic` | Use deterministic claim-evidence checks. |
-| `llm` | Use heuristic checks plus selective LLM verification for weak cases. |
-| `minicheck` | Use the MiniCheck-style classifier backend when available. |
+## Input Format
 
-`minicheck` is the CLI default, but course-report experiments may explicitly use
-`--verify-mode heuristic` for reproducibility and lower runtime. When reporting
-results, check each run's `run_config.json` before claiming which verifier was
-used.
+Use a plain `.txt` file. Speaker labels are optional.
 
-The verifier can label requirements as:
+Example:
 
-- `SUPPORTED`
-- `PARTIALLY_SUPPORTED`
-- `UNSUPPORTED`
-- `CONTRADICTED`
-- `NOT_ENOUGH_INFO`
-- `NOT_CHECKED`
+```text
+We are planning a web app for a small community clinic.
+What should receptionists be able to do first?
+They need to create appointment slots with a date, time, doctor, department, and maximum patient count.
+What should patients do with those slots?
+Patients should browse available appointment slots and reserve one open slot.
+We must not collect national ID numbers, full credit card numbers, or unrelated medical history.
+Do online payments need to be included in the first release?
+No, the first release does not need online payments. We may add them later.
+```
 
-The deterministic verifier checks:
+## Pipeline
 
-- referenced source units exist
-- evidence spans are present for traceable claims
-- acceptance criteria are non-empty
-- vague words such as `fast`, `easy`, `simple`, `secure`, and `reliable` are not
-  marked testable without measurable context
-- numeric thresholds are not introduced unless grounded in source evidence
-- future-scope or excluded items are not promoted into first-release requirements
+```mermaid
+flowchart TD
+    A["Raw conversation text"] --> B["Source-unit segmentation"]
+    B --> C["LLM source-unit decision generation"]
+    C --> D["Schema parsing and JSON repair"]
+    D --> E["Deterministic spec construction"]
+    E --> F["Evidence and acceptance criteria enrichment"]
+    F --> G["MiniCheck claim-evidence verification"]
+    G --> H["Confidence-aware post-processing"]
+    H --> I["MiniCheck re-verification when changed"]
+    I --> J["spec.md, spec.json, verification reports"]
+```
+
+The LLM does not directly write the final nested specification. It produces
+source-unit decisions. The application then builds the final requirements with
+traceable source units, evidence spans, acceptance criteria, and verification
+metadata.
+
+This design keeps the output more stable on small local models.
+
+## Verification and Post-Processing
+
+MiniCheck is used by default to estimate whether a generated requirement is
+supported by its evidence. The confidence value is stored in
+`verification_report.json` and summarized in `verification_report.md`.
+
+Low-confidence or low-quality items are not blindly deleted. They are routed
+through a conservative post-processing step:
+
+- privacy and security prohibitions are normalized as non-functional
+  requirements
+- first-release exclusions are normalized as constraints
+- answered open questions are removed
+- weak acceptance criteria are replaced with requirement-type templates
+- ambiguous pronouns are resolved when nearby conversation context is clear
+
+When the post-processor changes the specification, the affected output is
+verified again.
+
+## Output Philosophy
+
+`spec.md` is intended for human review. It avoids developer-only values such as
+source relevance scores, raw warning lists, and quality flags.
+
+Use the JSON files for analysis:
+
+- `spec.json` contains the complete structured requirement data
+- `verification_report.json` contains verdicts, MiniCheck confidence, evidence,
+  warnings, and run-level metrics
+
+## Model Configuration
+
+Models are configured in [configs/models.yaml](configs/models.yaml).
+
+Common aliases:
+
+| Alias | Backend | Repository |
+| --- | --- | --- |
+| `qwen3_4b_mlx_4bit` | MLX | `mlx-community/Qwen3-4B-Instruct-2507-4bit` |
+| `qwen3_4b_mlx_bf16` | MLX | `mlx-community/Qwen3-4B-Instruct-2507-bf16` |
+| `qwen2_5_0_5b_hf` | HF | `Qwen/Qwen2.5-0.5B-Instruct` |
+| `qwen3_4b_hf` | HF | `Qwen/Qwen3-4B-Instruct-2507` |
+| `qwen2_5_3b_hf` | HF | `Qwen/Qwen2.5-3B-Instruct` |
+
+The `qwen3_0_6b_*` aliases remain available in `configs/models.yaml` for
+baseline experiments. They are not recommended for production-quality
+requirements extraction because no trusted same-size instruct MLX variant was
+available during the project update.
+
+The backend is configured per alias in `configs/models.yaml`. Use `--backend`
+only when you intentionally want to override the configured backend.
+
+Generation is deterministic by default. With `do_sample: false` or
+`temperature: 0.0`, both HF and MLX runners use greedy decoding; `top_p` only
+matters when sampling is enabled with a positive temperature.
 
 ## Evaluation
 
-Evaluate one model:
+For report experiments, use the evaluation dataset:
 
 ```bash
 uv run python -m app.main \
   --evaluate \
   --dataset dataset/eval_samples.json \
-  --model qwen3_0.6b \
-  --verify-mode heuristic \
-  --repair-on-fail
+  --model qwen3_4b_mlx_4bit
 ```
 
-Compare configured models:
+Evaluation writes prediction files, run summaries, and comparison metrics under
+`eval_output/`. For the course report, the most useful comparisons are usually:
 
-```bash
-uv run python -m app.main \
-  --evaluate \
-  --dataset dataset/eval_samples.json \
-  --all-models
-```
-
-`--all-models` reads `compare_models` from `configs/models.yaml`. Make sure each
-entry in `compare_models` has a matching alias under `models` before running a
-large comparison.
-
-Evaluation outputs are written under:
-
-```text
-eval_output/YYYYMMDD_HHMMSS/<model>__single_shot/
-```
-
-## Metrics
-
-The evaluator reports both extraction and verification metrics:
-
-| Metric | Meaning |
-| --- | --- |
-| Functional / non-functional / constraint F1 | Exact-match requirement extraction score. |
-| Semantic functional / non-functional / constraint F1 | Lightweight token-overlap semantic match. |
-| Semantic requirement macro-F1 | Macro average of semantic FR/NFR/constraint F1. |
-| Hallucination rate | Predicted requirements not matched to gold items. |
-| Acceptance criteria coverage | Fraction of requirements with criteria. |
-| Evidence span coverage | Fraction with evidence spans. |
-| Traceability coverage | Fraction with valid source units and evidence. |
-| Quality gate pass rate | Fraction passing atomic/testable/actor/evidence checks. |
-| High ambiguity rate | Fraction marked high ambiguity. |
-| Source relevance average | Average source-claim relevance score. |
-| Groundedness rate | Fraction marked `SUPPORTED` or `PARTIALLY_SUPPORTED`. |
-| Unsupported requirement rate | Fraction marked unsupported, contradicted, or not enough info. |
-| Verification pass rate | Fraction marked `SUPPORTED`. |
-| Schema validity rate | JSON parse and Pydantic validation success. |
-| Latency / LLM calls | Average runtime and model-call count. |
+- baseline vs improved pipeline
+- heuristic verification vs MiniCheck verification
+- before vs after confidence-aware post-processing
+- Markdown usability before vs after hiding developer-only fields
 
 ## Project Structure
 
 ```text
 conversation-to-spec/
 ├── app/
-│   ├── main.py              # CLI entry point
-│   ├── segmenter.py         # transcript segmentation
-│   ├── schemas.py           # Pydantic schemas
-│   ├── prompt_builder.py    # few-shot single-shot prompt
-│   ├── model_runner.py      # local Hugging Face runner
-│   ├── extractor.py         # JSON parsing, repair, spec construction
-│   ├── quality.py           # acceptance criteria and quality checks
-│   ├── verifier.py          # heuristic/MiniCheck-style verification and repair
-│   ├── pipeline.py          # orchestration
-│   ├── formatter.py         # Markdown formatting
-│   ├── evaluation.py        # metrics and comparison tables
-│   └── progress.py          # CLI progress logging
+│   ├── main.py            # CLI entry point
+│   ├── model_runner.py    # HF and MLX local model runners
+│   ├── segmenter.py       # conversation segmentation
+│   ├── prompt_builder.py  # source-unit decision prompt
+│   ├── extractor.py       # parsing and deterministic spec construction
+│   ├── quality.py         # acceptance criteria and quality checks
+│   ├── verifier.py        # MiniCheck and verification reports
+│   ├── postprocessor.py   # confidence-aware spec cleanup
+│   ├── formatter.py       # user-facing Markdown output
+│   └── evaluation.py      # dataset evaluation and metrics
 ├── configs/
 ├── dataset/
 ├── samples/
@@ -263,17 +238,13 @@ conversation-to-spec/
 uv run pytest
 ```
 
-If `uv` cannot access its cache directory on Windows, fix the local cache
-permissions and rerun the command before reporting a fresh test count.
-
 ## Limitations
 
-- Small local models can still misclassify source units or copy few-shot example
-  wording if the prompt is too domain-specific.
-- The current semantic evaluator is deterministic and lightweight; it is not a
-  learned semantic similarity model.
-- The verifier improves traceability but does not replace human requirements
-  review.
-- Full RAGAS, Graph-RAG, and full MiniCheck reproduction are out of scope.
-- The available evaluation datasets are small, so reported results should be
-  treated as course-project evidence rather than broad generalization.
+- MiniCheck confidence is useful for routing and analysis, but it is not a full
+  replacement for human requirements review.
+- Pronoun resolution is conservative and context-based, not a complete
+  coreference-resolution system.
+- Acceptance criteria are template-based, so they may still need human
+  refinement for domain-specific workflows.
+- The included datasets are small and should be treated as course-project
+  evidence, not broad benchmark proof.
