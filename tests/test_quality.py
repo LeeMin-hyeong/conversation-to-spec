@@ -7,15 +7,15 @@ from app.schemas import (
 )
 
 
-def test_requirement_schema_accepts_legacy_and_enriched_items():
-    legacy = RequirementItem(
+def test_requirement_schema_accepts_minimal_and_enriched_items():
+    minimal = RequirementItem(
         id="FR1",
         text="The system shall support booking.",
         source_units=["U1"],
     )
-    assert legacy.evidence_spans == []
-    assert legacy.acceptance_criteria == []
-    assert legacy.quality_checks.ambiguity_risk == "medium"
+    assert minimal.evidence_spans == []
+    assert minimal.acceptance_criteria == []
+    assert minimal.quality_checks.ambiguity_risk == "medium"
 
     enriched = RequirementItem(
         id="FR2",
@@ -35,7 +35,7 @@ def test_requirement_schema_accepts_legacy_and_enriched_items():
     )
     spec = SpecOutput(
         project_summary="Summary.",
-        functional_requirements=[legacy, enriched],
+        functional_requirements=[minimal, enriched],
         conversation_units=[ConversationUnit(id="U1", text="Customers should reserve tables online.")],
     )
     assert spec.functional_requirements[1].quality_checks.has_traceable_evidence is True

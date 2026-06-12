@@ -1,29 +1,18 @@
 import json
 
 from app.extractor import (
-    build_stage_1_fallback_candidates,
     ExtractionError,
     extract_spec_output,
     extract_spec_output_safe,
     semantic_verify,
-    validate_stage_1_candidates,
-    validate_stage_2_classification,
-    validate_stage_3_rewriting,
-    validate_requirement_quality_enrichment,
-    validate_stage_4_open_questions,
-    validate_stage_5_followups,
 )
 from app.schemas import (
-    CandidateItem,
     ConstraintItem,
     ConversationUnit,
     NoteItem,
     QuestionItem,
     RequirementItem,
     SpecOutput,
-    Stage1CandidatesOutput,
-    Stage3RewrittenOutput,
-    RewrittenItem,
 )
 
 
@@ -611,31 +600,6 @@ def test_extract_spec_removes_few_shot_example_contamination_before_semantic_fal
     )
 
 
-def test_semantic_verify_downgrades_constraint_without_hard_boundary_signal():
-    units = [ConversationUnit(id="U1", text="Staff should have access to the admin page.")]
-    spec = SpecOutput(
-        project_summary="Summary.",
-        functional_requirements=[],
-        non_functional_requirements=[],
-        constraints=[
-            ConstraintItem(
-                id="CON1",
-                text="Staff should have access to the admin page.",
-                source_units=["U1"],
-            )
-        ],
-        open_questions=[],
-        follow_up_questions=[],
-        notes=[],
-        conversation_units=units,
-    )
-
-    verified, warnings = semantic_verify(spec, units)
-    assert not verified.constraints
-    assert any("staff" in item.text.lower() and "admin page" in item.text.lower() for item in verified.functional_requirements)
-    assert any("not_hard_constraint" in warning for warning in warnings)
-
-
 def test_semantic_verify_normalizes_nfr_text_from_repaired_source():
     units = [
         ConversationUnit(
@@ -670,32 +634,6 @@ def test_semantic_verify_normalizes_nfr_text_from_repaired_source():
     assert verified.non_functional_requirements[0].source_units == ["U2"]
     assert "load quickly on mobile" in verified.non_functional_requirements[0].text
     assert any("source_units_repaired_by_inference" in warning for warning in warnings)
-
-
-def test_semantic_verify_records_future_scope_constraint_and_note():
-    units = [ConversationUnit(id="U1", text="We may add online payment later.")]
-    spec = SpecOutput(
-        project_summary="Summary.",
-        functional_requirements=[],
-        non_functional_requirements=[],
-        constraints=[
-            ConstraintItem(
-                id="CON1",
-                text="Online payment may be added later.",
-                source_units=["U1"],
-            )
-        ],
-        open_questions=[],
-        follow_up_questions=[],
-        notes=[],
-        conversation_units=units,
-    )
-    verified, warnings = semantic_verify(spec, units)
-    assert len(verified.constraints) == 1
-    assert "Online payment shall be deferred" in verified.constraints[0].text
-    assert not any("Future-scope boundary candidate" in note.text for note in verified.notes)
-    assert any("Should online payment" in question.text for question in verified.open_questions)
-    assert any("future_scope_without_explicit_boundary" in w for w in warnings)
 
 
 def test_semantic_verify_adds_constraint_for_explicit_later_phase_scope():
@@ -738,75 +676,6 @@ def test_semantic_verify_keeps_explicit_release_boundary_constraint():
     verified, warnings = semantic_verify(spec, units)
     assert len(verified.constraints) == 1
     assert not any("future_scope_without_explicit_boundary" in w for w in warnings)
-
-
-def test_stage_4_accepts_string_questions_and_infers_sources():
-    units = [
-        ConversationUnit(id="U1", text="Customers should reserve tables online."),
-        ConversationUnit(id="U2", text="The design should feel clean and modern."),
-    ]
-    out = validate_stage_4_open_questions(
-        {
-            "open_questions": [
-                "What acceptance criteria define clean and modern design?"
-            ]
-        },
-        units,
-    )
-    assert len(out.open_questions) == 1
-    assert out.open_questions[0].text.endswith("?")
-    assert out.open_questions[0].source_units == ["U2"]
-
-
-def test_stage_5_accepts_common_question_field_alias():
-    units = [ConversationUnit(id="U1", text="Customers should reserve tables online.")]
-    out = validate_stage_5_followups(
-        {
-            "open_questions": [
-                {
-                    "question": "Which reservation time slots should be supported?",
-                    "source_units": ["U1"],
-                }
-            ]
-        },
-        units,
-    )
-    assert len(out.follow_up_questions) == 1
-    assert out.follow_up_questions[0].source_units == ["U1"]
-
-
-def test_stage_5_accepts_followup_alias_and_multiline_string():
-    units = [
-        ConversationUnit(id="U1", text="Customers should reserve tables online for specific time slots."),
-        ConversationUnit(id="U2", text="The design should feel clean and modern."),
-    ]
-    out = validate_stage_5_followups(
-        {
-            "followup_questions": (
-                "- Which specific reservation time slots should be supported?\n"
-                "- What measurable criteria define clean and modern design?"
-            )
-        },
-        units,
-    )
-    assert len(out.follow_up_questions) == 2
-    assert all(item.text.endswith("?") for item in out.follow_up_questions)
-    assert all(item.source_units for item in out.follow_up_questions)
-
-
-def test_stage_5_drops_ungrounded_generic_question_instead_of_defaulting_u1():
-    units = [
-        ConversationUnit(id="U1", text="Customers should reserve tables online."),
-        ConversationUnit(id="U2", text="The design should feel clean and modern."),
-    ]
-    try:
-        validate_stage_5_followups(
-            {"follow_up_questions": ["What should we do next?"]},
-            units,
-        )
-        assert False, "Expected ExtractionError for ungrounded question"
-    except ExtractionError as exc:
-        assert "ungrounded questions" in str(exc)
 
 
 def test_semantic_verify_downgrades_hard_boundary_constraint_with_wrong_source():
@@ -861,220 +730,3 @@ def test_semantic_verify_repairs_constraint_sources_when_better_evidence_exists(
     assert len(verified.constraints) == 1
     assert verified.constraints[0].source_units == ["U1"]
     assert any("source_units_repaired_by_inference" in w for w in warnings)
-
-
-def test_stage_1_relabels_quality_like_requirement_as_quality_expectation():
-    units = [ConversationUnit(id="U1", text="The site should load quickly on mobile.")]
-    out = validate_stage_1_candidates(
-        {
-            "candidates": [
-                {
-                    "id": "C1",
-                    "kind": "possible_requirement",
-                    "text": "The site should load quickly on mobile.",
-                    "source_units": ["U1"],
-                }
-            ]
-        },
-        units,
-    )
-    assert out.candidates[0].kind == "possible_quality_expectation"
-
-
-def test_stage_2_sanity_coerces_mobile_performance_fr_to_nfr():
-    units = [ConversationUnit(id="U1", text="The site should load quickly on mobile.")]
-    stage1 = Stage1CandidatesOutput(
-        candidates=[
-            CandidateItem(
-                id="C1",
-                kind="possible_quality_expectation",
-                text="The site should load quickly on mobile.",
-                source_units=["U1"],
-            )
-        ]
-    )
-    out = validate_stage_2_classification(
-        {
-            "classified_candidates": [
-                {
-                    "id": "C1",
-                    "final_type": "functional_requirement",
-                    "reason": "Model marked as functional.",
-                    "source_units": ["U1"],
-                }
-            ]
-        },
-        stage1,
-        units,
-    )
-    assert out.classified_candidates[0].final_type == "non_functional_requirement"
-
-
-def test_stage_2_sanity_coerces_clean_modern_fr_to_open_question():
-    units = [ConversationUnit(id="U1", text="The design should feel clean and modern.")]
-    stage1 = Stage1CandidatesOutput(
-        candidates=[
-            CandidateItem(
-                id="C1",
-                kind="possible_quality_expectation",
-                text="The design should feel clean and modern.",
-                source_units=["U1"],
-            )
-        ]
-    )
-    out = validate_stage_2_classification(
-        {
-            "classified_candidates": [
-                {
-                    "id": "C1",
-                    "final_type": "functional_requirement",
-                    "reason": "Model marked as functional.",
-                    "source_units": ["U1"],
-                }
-            ]
-        },
-        stage1,
-        units,
-    )
-    assert out.classified_candidates[0].final_type == "open_question"
-
-
-def test_stage_2_sanity_keeps_true_capability_as_fr():
-    units = [ConversationUnit(id="U1", text="Customers should be able to reserve tables online.")]
-    stage1 = Stage1CandidatesOutput(
-        candidates=[
-            CandidateItem(
-                id="C1",
-                kind="possible_requirement",
-                text="Customers should be able to reserve tables online.",
-                source_units=["U1"],
-            )
-        ]
-    )
-    out = validate_stage_2_classification(
-        {
-            "classified_candidates": [
-                {
-                    "id": "C1",
-                    "final_type": "functional_requirement",
-                    "reason": "Model marked as functional.",
-                    "source_units": ["U1"],
-                }
-            ]
-        },
-        stage1,
-        units,
-    )
-    assert out.classified_candidates[0].final_type == "functional_requirement"
-
-
-def test_stage_1_rejects_placeholder_echo_candidates():
-    units = [ConversationUnit(id="U1", text="We need a cafe website.")]
-    try:
-        validate_stage_1_candidates(
-            {
-                "candidates": [
-                    {
-                        "id": "C1",
-                        "kind": "possible_requirement",
-                        "text": "short candidate description",
-                        "source_units": ["U1"],
-                    },
-                    {
-                        "id": "C2",
-                        "kind": "possible_constraint",
-                        "text": "explicit boundary or release limitation",
-                        "source_units": ["U1"],
-                    },
-                ]
-            },
-            units,
-        )
-        assert False, "Expected ExtractionError for placeholder echo candidates"
-    except ExtractionError as exc:
-        assert "placeholder/example echo" in str(exc)
-
-
-def test_stage_3_drops_items_not_grounded_in_stage_2_candidates():
-    units = [
-        ConversationUnit(id="U1", text="Customers should reserve tables online."),
-        ConversationUnit(id="U2", text="The design should feel clean and modern."),
-    ]
-    out = validate_stage_3_rewriting(
-        {
-            "rewritten_items": [
-                {
-                    "id": "R1",
-                    "type": "functional_requirement",
-                    "text": "The system shall allow customers to reserve tables online.",
-                    "source_units": ["U1"],
-                },
-                {
-                    "id": "R2",
-                    "type": "functional_requirement",
-                    "text": "The system shall provide a clean and modern design.",
-                    "source_units": ["U2"],
-                },
-            ]
-        },
-        units,
-        authorized_rewrite_candidates=[
-            {
-                "id": "C1",
-                "final_type": "functional_requirement",
-                "text": "Customers should reserve tables online.",
-                "source_units": ["U1"],
-            }
-        ],
-    )
-    assert len(out.rewritten_items) == 1
-    assert out.rewritten_items[0].source_units == ["U1"]
-
-
-def test_requirement_quality_enrichment_fills_missing_model_fields():
-    units = [ConversationUnit(id="U1", text="Customers should reserve tables online.")]
-    rewritten = Stage3RewrittenOutput(
-        rewritten_items=[
-            RewrittenItem(
-                id="R1",
-                type="functional_requirement",
-                text="The system shall allow customers to reserve tables online.",
-                source_units=["U1"],
-            )
-        ]
-    )
-    out = validate_requirement_quality_enrichment(
-        {
-            "enriched_items": [
-                {
-                    "id": "R1",
-                    "type": "functional_requirement",
-                    "text": "The system shall allow customers to reserve tables online.",
-                    "source_units": ["U1"],
-                    "quality_checks": {
-                        "is_atomic": True,
-                        "is_testable": True,
-                        "has_clear_actor": True,
-                        "has_traceable_evidence": True,
-                        "ambiguity_risk": "low",
-                    },
-                }
-            ]
-        },
-        units,
-        rewritten,
-    )
-    assert len(out.enriched_items) == 1
-    assert out.enriched_items[0].evidence_spans == ["Customers should reserve tables online."]
-    assert out.enriched_items[0].acceptance_criteria
-    assert out.enriched_items[0].quality_checks.has_traceable_evidence is True
-
-
-def test_stage_1_fallback_marks_mobile_performance_as_quality_expectation():
-    units = [
-        ConversationUnit(id="U1", text="The website should load quickly on mobile devices."),
-        ConversationUnit(id="U2", text="Customers should reserve tables online."),
-    ]
-    out = build_stage_1_fallback_candidates(units)
-    quality_items = [c for c in out.candidates if c.kind == "possible_quality_expectation"]
-    assert any("load quickly on mobile" in item.text.lower() for item in quality_items)

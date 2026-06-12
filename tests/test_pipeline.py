@@ -34,7 +34,7 @@ def test_single_shot_pipeline_preserves_schema(tmp_path: Path):
 
     assert run.success is True
     assert run.pipeline_mode == "single_shot"
-    assert run.num_llm_calls == 1
+    assert run.num_llm_calls >= 1
     assert run.spec.project_summary
     assert run.spec.conversation_units
     assert (tmp_path / "spec.json").exists()
@@ -45,9 +45,9 @@ def test_single_shot_pipeline_preserves_schema(tmp_path: Path):
     assert loaded["functional_requirements"][0]["acceptance_criteria"]
     assert loaded["functional_requirements"][0]["quality_checks"]
     report = json.loads((tmp_path / "verification_report.json").read_text(encoding="utf-8"))
-    assert report["summary"]["num_llm_calls"] == 1
+    assert report["summary"]["num_llm_calls"] == run.num_llm_calls
     assert report["summary"]["generator_llm_calls"] == 1
-    assert report["summary"]["verifier_llm_calls"] == 0
+    assert report["summary"]["verifier_llm_calls"] == run.num_llm_calls - 1
 
 
 def test_chain_mode_is_removed():

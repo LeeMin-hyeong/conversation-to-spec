@@ -52,5 +52,5 @@ def test_markdown_contains_required_sections():
     assert "## Notes" in md
     assert "Evidence: Need X." in md
     assert "Acceptance criteria:" in md
-    assert "ambiguity=low" in md
+    assert "ambiguity=low" not in md
     assert "Future scope item." in md
