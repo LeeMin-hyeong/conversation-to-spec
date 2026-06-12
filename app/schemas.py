@@ -94,65 +94,11 @@ class SpecOutput(BaseModel):
     verification_warnings: List[str] = Field(default_factory=list)
 
 
-class CandidateItem(BaseModel):
-    id: str
-    kind: str
-    text: str
-    source_units: List[str] = Field(default_factory=list)
-
-
-class Stage1CandidatesOutput(BaseModel):
-    candidates: List[CandidateItem] = Field(default_factory=list)
-
-
-class ClassifiedCandidateItem(BaseModel):
-    id: str
-    final_type: str
-    reason: str
-    source_units: List[str] = Field(default_factory=list)
-
-
-class Stage2ClassifiedOutput(BaseModel):
-    classified_candidates: List[ClassifiedCandidateItem] = Field(default_factory=list)
-
-
-class RewrittenItem(BaseModel):
+class EnrichedRequirementItem(BaseModel):
     id: str
     type: str
     text: str
     source_units: List[str] = Field(default_factory=list)
-
-
-class Stage3RewrittenOutput(BaseModel):
-    rewritten_items: List[RewrittenItem] = Field(default_factory=list)
-
-
-class EnrichedRequirementItem(RewrittenItem):
     evidence_spans: List[str] = Field(default_factory=list)
     acceptance_criteria: List[str] = Field(default_factory=list)
     quality_checks: RequirementQualityChecks = Field(default_factory=RequirementQualityChecks)
-
-
-class RequirementQualityEnrichmentOutput(BaseModel):
-    enriched_items: List[EnrichedRequirementItem] = Field(default_factory=list)
-
-
-class Stage4OpenQuestionsOutput(BaseModel):
-    open_questions: List[QuestionItem] = Field(default_factory=list)
-
-
-class Stage5FollowUpOutput(BaseModel):
-    follow_up_questions: List[QuestionItem] = Field(default_factory=list)
-
-
-class Stage6SummaryOutput(BaseModel):
-    project_summary: str
-
-
-# Backward-compatible aliases for old stage numbering.
-class Stage4FollowUpOutput(Stage5FollowUpOutput):
-    pass
-
-
-class Stage5SummaryOutput(Stage6SummaryOutput):
-    pass

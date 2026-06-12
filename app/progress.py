@@ -22,13 +22,6 @@ PIPELINE_PROGRESS_SEQUENCE = (
 
 PIPELINE_STAGE_LABELS = {
     STAGE_0: "Segment conversation",
-    "stage_1_candidate_extraction": "Extract candidates",
-    "stage_2_candidate_classification": "Classify candidates",
-    "stage_3_requirement_rewriting": "Rewrite requirements",
-    "requirement_quality_enrichment": "Enrich requirement quality",
-    "stage_4_open_question_generation": "Generate open questions",
-    "stage_5_followup_generation": "Generate follow-up questions",
-    "stage_6_project_summary": "Summarize project",
     STAGE_MODEL_PREP: "Prepare model",
     "single_shot_spec_generation": "Generate spec",
     STAGE_VERIFICATION: "Verify and refine",

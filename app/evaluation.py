@@ -328,7 +328,6 @@ def _requirement_quality_metrics(predicted_specs: dict[str, SpecOutput]) -> dict
             "traceability_coverage": 0.0,
             "quality_gate_pass_rate": 0.0,
             "high_ambiguity_rate": 0.0,
-            "source_relevance_avg": 0.0,
             "groundedness_rate": 0.0,
             "unsupported_requirement_rate": 0.0,
             "verification_pass_rate": 0.0,
@@ -348,12 +347,6 @@ def _requirement_quality_metrics(predicted_specs: dict[str, SpecOutput]) -> dict
         if str(getattr(getattr(item, "quality_checks", None), "ambiguity_risk", "")).strip().lower()
         == "high"
     )
-    relevance_scores = [
-        float(item.verification.source_relevance_score)
-        for _, item in records
-        if getattr(item, "verification", None)
-        and item.verification.source_relevance_score is not None
-    ]
     grounded = sum(
         1
         for _, item in records
@@ -379,22 +372,10 @@ def _requirement_quality_metrics(predicted_specs: dict[str, SpecOutput]) -> dict
         "traceability_coverage": traceable / total,
         "quality_gate_pass_rate": gate_pass / total,
         "high_ambiguity_rate": high_ambiguity / total,
-        "source_relevance_avg": mean(relevance_scores) if relevance_scores else 0.0,
         "groundedness_rate": grounded / total,
         "unsupported_requirement_rate": unsupported / total,
         "verification_pass_rate": verification_pass / total,
     }
-
-
-def _stage_stat_value(stats_map: dict[str, Any], primary_key: str, fallback_keys: Iterable[str]) -> Optional[float]:
-    for key in (primary_key, *fallback_keys):
-        if key not in stats_map:
-            continue
-        try:
-            return float(stats_map[key])
-        except Exception:
-            continue
-    return None
 
 
 def compute_metrics(
@@ -499,8 +480,6 @@ def compute_metrics(
     stage_failure_counts: dict[str, int] = {}
     stage_retry_total = 0
     stage_retry_observed = 0
-    stage1_candidate_values: list[float] = []
-    stage2_discard_rate_values: list[float] = []
     stage4_open_question_values: list[float] = []
     stage5_followup_values: list[float] = []
     num_llm_calls_values: list[float] = []
@@ -517,30 +496,16 @@ def compute_metrics(
             stage_retry_total += sum(int(v) for v in retry_map.values())
             stage_retry_observed += 1
         stats_map = status.stage_stats or {}
-        if "stage_1_candidate_count" in stats_map:
+        if "stage_4_open_question_count" in stats_map:
             try:
-                stage1_candidate_values.append(float(stats_map["stage_1_candidate_count"]))
+                stage4_open_question_values.append(float(stats_map["stage_4_open_question_count"]))
             except Exception:
                 pass
-        if "stage_2_discard_rate" in stats_map:
+        if "stage_5_follow_up_count" in stats_map:
             try:
-                stage2_discard_rate_values.append(float(stats_map["stage_2_discard_rate"]))
+                stage5_followup_values.append(float(stats_map["stage_5_follow_up_count"]))
             except Exception:
                 pass
-        stage4_open_question = _stage_stat_value(
-            stats_map,
-            "stage_4_open_question_count",
-            ("stage_4_follow_up_count",),
-        )
-        if stage4_open_question is not None:
-            stage4_open_question_values.append(stage4_open_question)
-        stage5_followup = _stage_stat_value(
-            stats_map,
-            "stage_5_follow_up_count",
-            ("stage_4_follow_up_count",),
-        )
-        if stage5_followup is not None:
-            stage5_followup_values.append(stage5_followup)
         if "num_llm_calls" in stats_map:
             try:
                 num_llm_calls_values.append(float(stats_map["num_llm_calls"]))
@@ -631,16 +596,8 @@ def compute_metrics(
         "avg_stage_retry_count": (
             stage_retry_total / stage_retry_observed if stage_retry_observed else 0.0
         ),
-        "avg_stage_1_candidate_count": (
-            mean(stage1_candidate_values) if stage1_candidate_values else 0.0
-        ),
-        "avg_stage_2_discard_rate": (
-            mean(stage2_discard_rate_values) if stage2_discard_rate_values else 0.0
-        ),
         "avg_stage_4_open_question_count": avg_stage_4_open_question_count,
         "avg_stage_5_follow_up_count": avg_stage_5_follow_up_count,
-        # Legacy alias retained for old consumers that still expect stage-4 follow-up naming.
-        "avg_stage_4_follow_up_count": avg_stage_5_follow_up_count,
         "stage_failure_counts": stage_failure_counts,
         "constraint_semantic_warning_count": constraint_warning_count,
         "avg_latency_sec": avg_latency,
@@ -895,7 +852,6 @@ def build_comparison_table(results: dict[str, dict[str, Any]]) -> str:
         "requirement_count",
         "acceptance_criteria_coverage",
         "evidence_span_coverage",
-        "source_relevance_avg",
         "groundedness_rate",
         "unsupported_requirement_rate",
         "verification_pass_rate",
@@ -912,8 +868,6 @@ def build_comparison_table(results: dict[str, dict[str, Any]]) -> str:
         "repair_success_rate",
         "usable_output",
         "semantic_warning",
-        "stage1_candidates",
-        "stage2_discard_rate",
         "stage4_open_questions",
         "stage5_follow_ups",
         "num_llm_calls",
@@ -945,7 +899,6 @@ def build_comparison_table(results: dict[str, dict[str, Any]]) -> str:
                     _format_metric(metrics.get('requirement_count', 0.0)),
                     _format_metric(metrics.get('acceptance_criteria_coverage', 0.0)),
                     _format_metric(metrics.get('evidence_span_coverage', 0.0)),
-                    _format_metric(metrics.get('source_relevance_avg', 0.0)),
                     _format_metric(metrics.get('groundedness_rate', 0.0)),
                     _format_metric(metrics.get('unsupported_requirement_rate', 0.0)),
                     _format_metric(metrics.get('verification_pass_rate', 0.0)),
@@ -962,10 +915,8 @@ def build_comparison_table(results: dict[str, dict[str, Any]]) -> str:
                     _format_metric(metrics.get('repair_success_rate', 0.0)),
                     _format_metric(metrics.get('final_usable_output_rate', 0.0)),
                     _format_metric(metrics.get('semantic_warning_rate', 0.0)),
-                    _format_metric(metrics.get('avg_stage_1_candidate_count', 0.0)),
-                    _format_metric(metrics.get('avg_stage_2_discard_rate', 0.0)),
-                    _format_metric(metrics.get('avg_stage_4_open_question_count', metrics.get('avg_stage_4_follow_up_count', 0.0))),
-                    _format_metric(metrics.get('avg_stage_5_follow_up_count', metrics.get('avg_stage_4_follow_up_count', 0.0))),
+                    _format_metric(metrics.get('avg_stage_4_open_question_count', 0.0)),
+                    _format_metric(metrics.get('avg_stage_5_follow_up_count', 0.0)),
                     _format_metric(metrics.get('num_llm_calls', 0.0)),
                     _format_metric(metrics.get('avg_latency_sec', 0.0)),
                 ]

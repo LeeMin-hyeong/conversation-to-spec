@@ -35,10 +35,6 @@ PIPELINE_STATUS_FAILED_INVALID_OUTPUT = "failed_invalid_output"
 
 STAGE_SINGLE_SHOT = "single_shot_spec_generation"
 
-# Kept as an empty compatibility constant for old imports. The legacy
-# multi-stage implementation has been removed from the executable path.
-ROBUSTNESS_PROFILE_CONFIGS: dict[str, dict[str, Any]] = {}
-
 
 @dataclass
 class PipelineRunResult:
